@@ -1,0 +1,31 @@
+/**** Start of imports. If edited, may not auto-convert in the playground. ****/
+var snics = ee.ImageCollection("projects/imazon-simex/MAPBIOMAS/GTAGUA/snic"),
+    bioms = ee.FeatureCollection("projects/mapbiomas-workspace/AUXILIAR/biomas-2019");
+/***** End of imports. If edited, may not auto-convert in the playground. *****/
+var biom_cd = 1;
+ 
+var biom_names = [
+  'NONE', 'AMAZ', 'CAAT', 'CERR', 'MATA', 'PAMP', 'PANT'
+  ];
+
+var biom = bioms.filter(ee.Filter.eq('CD_Bioma', biom_cd));
+
+var snics12 = snics.filter(ee.Filter.eq('seed', 12));
+
+for (var year=1992; year<=1992; year++) {
+  
+  var snics_year = snics12.filter(ee.Filter.eq('year', year)).first().toInt().clip(biom);
+  
+  var obj = snics_year.reduceToVectorsStreaming({
+    geometry: biom.first().geometry().bounds(), 
+    scale: 30, 
+    bestEffort: true, 
+    maxPixels: 1e13, 
+  });
+  
+  Export.table.toAsset({
+    collection: obj, 
+    description: 'obj_' + biom_cd + '_' + year, 
+    assetId: 'projects/imazon-simex/MAPBIOMAS/GTAGUA/FASE2/OBJCRU/' + biom_names[biom_cd] +'/obj_' + biom_cd + '_' + year
+  });
+}

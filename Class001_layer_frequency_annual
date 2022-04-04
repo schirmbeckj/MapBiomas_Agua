@@ -1,0 +1,50 @@
+/**** Start of imports. If edited, may not auto-convert in the playground. ****/
+var col = ee.ImageCollection("users/wwfrioparaguai/MapBiomasAGUA/iteration_2"),
+    brazil = ee.FeatureCollection("projects/mapbiomas-workspace/AUXILIAR/brasil_2km");
+/***** End of imports. If edited, may not auto-convert in the playground. *****/
+col = col.map(function (i) {
+  var ano = ee.Number.parse(ee.String(i.get('system:index')).slice(12));
+  return i.set('year', ano);
+});
+
+var years = [
+  1985, 1986, 1987, 1988, 1989, 1990,
+  1991, 1992, 1993, 1994, 1995,
+  1996, 1997, 1998, 1999, 2000,
+  2001, 2002, 2003, 2004, 2005,
+  2006, 2007, 2008, 2009, 2010,
+  2011, 2012, 2013, 2014, 2015,
+  2016, 2017, 2018, 2019, 2020
+  ];
+
+var band_names_list = [
+  'water_1985', 'water_1986', 'water_1987', 'water_1988', 'water_1989', 'water_1990',
+  'water_1991', 'water_1992', 'water_1993', 'water_1994', 'water_1995',
+  'water_1996', 'water_1997', 'water_1998', 'water_1999', 'water_2000',
+  'water_2001', 'water_2002', 'water_2003', 'water_2004', 'water_2005',
+  'water_2006', 'water_2007', 'water_2008', 'water_2009', 'water_2010',
+  'water_2011', 'water_2012', 'water_2013', 'water_2014', 'water_2015',
+  'water_2016', 'water_2017', 'water_2018', 'water_2019' , 'water_2020'   
+  ];
+
+var band_imgs = years.map(function (year) {
+
+  var swsc_year_freq = col.filter(ee.Filter.eq('year', year)).first().reduce(ee.Reducer.sum());
+  
+  return swsc_year_freq.gte(6).selfMask().rename('water').byte();
+});
+
+var band_col = ee.ImageCollection.fromImages(band_imgs);
+
+var image = band_col.toBands().rename(band_names_list);
+
+print(image);
+
+Export.image.toAsset({
+  image: image, 
+  description: 'mapbiomas_gt_agua_anual', 
+  assetId: 'projects/mapbiomas-workspace/AMOSTRAS/GTAGUA/mapbiomas_gt_agua_anual_2020', 
+  region: brazil.first().geometry().bounds(), 
+  scale: 30, 
+  maxPixels: 1e13
+});

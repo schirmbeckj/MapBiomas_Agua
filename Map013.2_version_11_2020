@@ -1,0 +1,230 @@
+/**** Start of imports. If edited, may not auto-convert in the playground. ****/
+var col = ee.ImageCollection("projects/mapbiomas-workspace/TRANSVERSAIS/AGUA5-FT"),
+    wbc_col = ee.ImageCollection("projects/mapbiomas-workspace/AMOSTRAS/GTAGUA/OBJETOS/CLASSIFICADOS/TESTE_1_raster"),
+    bioms = ee.FeatureCollection("projects/mapbiomas-workspace/AUXILIAR/biomas-2019"),
+    mapb = ee.Image("projects/mapbiomas-workspace/public/collection5/mapbiomas_collection50_integration_v1"),
+    geometry2 = 
+    /* color: #d63000 */
+    /* shown: false */
+    /* displayProperties: [
+      {
+        "type": "rectangle"
+      }
+    ] */
+    ee.Geometry.Polygon(
+        [[[-50.68752944964477, -22.690004336520563],
+          [-50.68752944964477, -23.04683225526204],
+          [-49.875914459410396, -23.04683225526204],
+          [-49.875914459410396, -22.690004336520563]]], null, false),
+    geometry = 
+    /* color: #d63000 */
+    /* shown: false */
+    /* displayProperties: [
+      {
+        "type": "rectangle"
+      }
+    ] */
+    ee.Geometry.Polygon(
+        [[[-50.962508439153225, -22.549025418533052],
+          [-50.962508439153225, -23.55989590798526],
+          [-49.281600236028225, -23.55989590798526],
+          [-49.281600236028225, -22.549025418533052]]], null, false),
+    missing_limit = ee.FeatureCollection("projects/mapbiomas-workspace/AMOSTRAS/GTAGUA/missing_limit");
+/***** End of imports. If edited, may not auto-convert in the playground. *****/
+
+wbc_col = wbc_col.filter(ee.Filter.eq("version", "2")); 
+
+var biom = 1;
+var biomLimit = bioms.filter(ee.Filter.eq("CD_Bioma", biom));
+var version = "11";
+
+var biome_names = ["NONE", "AMAZONIA", "CAATINGA", "CERRADO", "MATAATLANTICA", "PAMPA", "PANTANAL"];
+var biome_name = biome_names[biom];
+
+var always_water_img = mapb.reduce(ee.Reducer.min()).eq(33).selfMask();
+
+var do_mapeamento_mensal = function (year) {
+
+  var water_y = 
+    always_water_img.rename('classification_1').addBands(
+    always_water_img.rename('classification_2')).addBands(
+    always_water_img.rename('classification_3')).addBands(
+    always_water_img.rename('classification_4')).addBands(
+    always_water_img.rename('classification_5')).addBands(
+    always_water_img.rename('classification_6')).addBands(
+    always_water_img.rename('classification_7')).addBands(
+    always_water_img.rename('classification_8')).addBands(
+    always_water_img.rename('classification_9')).addBands(
+    always_water_img.rename('classification_10')).addBands(
+    always_water_img.rename('classification_11')).addBands(
+    always_water_img.rename('classification_12'));
+  
+  return water_y.byte().clip(missing_limit);
+};
+
+var correcao_1_mensal = function (year, img) {
+  
+  var mapeamento_add = do_mapeamento_mensal(year);
+  
+  return ee.ImageCollection.fromImages([img, mapeamento_add]).max();
+};
+
+var correcao_1_anual  = function (year, img) {
+  
+  var mapeamento_add = do_mapeamento_mensal(year).reduce(ee.Reducer.sum()).gte(6).selfMask().rename("classification").byte();
+  
+  return ee.ImageCollection.fromImages([img.rename("classification"), mapeamento_add]).max();
+};
+
+var static_fpo = wbc_col.min().eq(5).selfMask().multiply(0);
+Map.addLayer(wbc_col.min(), {min:1, max:5, palette:["ffffff", "ffff00", "ff0000", "800000", "000000"]})
+var correcao_2_mensal = function (year, img) {
+  
+  // var fpos_anual = wbc_col
+  //  .filter(ee.Filter.eq("year", year))
+  //  .filter(ee.Filter.eq("biome", biome_name))
+  //  .first()
+  //  .eq(5).selfMask()
+  //  .multiply(0); 
+    
+  var fpos = static_fpo//.addBands(fpos_anual).reduce(ee.Reducer.min()); 
+  
+  var fpo_12 = fpos.rename("classification_1").addBands(
+    fpos.rename("classification_2")).addBands(
+    fpos.rename("classification_3")).addBands(
+    fpos.rename("classification_4")).addBands(
+    fpos.rename("classification_5")).addBands(
+    fpos.rename("classification_6")).addBands(
+    fpos.rename("classification_7")).addBands(
+    fpos.rename("classification_8")).addBands(
+    fpos.rename("classification_9")).addBands(
+    fpos.rename("classification_10")).addBands(
+    fpos.rename("classification_11")).addBands(
+    fpos.rename("classification_12"));
+  
+  return ee.ImageCollection.fromImages([img, fpo_12]).min().selfMask();
+};
+var correcao_2_anual  = function (year, img) {
+  
+  // var fpos_anual = wbc_col
+  //  .filter(ee.Filter.eq("year", year))
+  //  .filter(ee.Filter.eq("biome", biome_name))
+  //  .first()
+  //  .eq(5).selfMask()
+  //  .multiply(0);
+    
+  var fpos = static_fpo//.addBands(fpos_anual).reduce(ee.Reducer.min());  
+  
+  return img.where(fpos.eq(0), 0).selfMask(); //.eq(5)
+};
+
+var versionIn = "1";
+var col_2 = col
+  //.filter(ee.Filter.eq('biome', biom_name))
+  .filter(ee.Filter.eq('version', versionIn))   // 2 para o pampa
+  //.filter(ee.Filter.eq('cadence', 'anual')); // 2 para o pampa
+
+var bandNames = [
+  "classification_1", 
+  "classification_2", 
+  "classification_3", 
+  "classification_4", 
+  "classification_5", 
+  "classification_6", 
+  "classification_7", 
+  "classification_8", 
+  "classification_9", 
+  "classification_10", 
+  "classification_11", 
+  "classification_12"
+];
+var mensal =  ee.ImageCollection ('users/wwfrioparaguai/MapBiomasAGUA/iteration_2')
+var col_mensal = mensal.map(function(i){
+  var ano =  ee.Number.parse(ee.String(i.get('system:index')).slice(12));
+  return i.set('year', ano).rename(bandNames);
+});
+
+for (var year=2020; year<=2020; year++) {
+  
+  var in_mensal = col_mensal
+    // .filter(ee.Filter.eq("biome", biome_name))
+    .filter(ee.Filter.eq("year", year))
+    .mosaic();
+    
+var blues = ["ffffff", "00ffff", "0000ff", "000080"];
+Map.addLayer(ee.Image(1), {palette: "008000"}, "back", true, 0.5);    
+Map.addLayer(in_mensal.reduce(ee.Reducer.sum()), {min:1, max:12, palette: blues}, "in mensal", false);    
+    
+  var in_anual = col_2
+    //.filter(ee.Filter.eq("biome", biome_name))
+    //.filter(ee.Filter.eq("cadence", "annual"))
+    .filter(ee.Filter.eq("year", year))
+    .mosaic();
+    
+Map.addLayer(in_anual, {palette: "blue"}, "in anual", false);   
+  
+  var out_mensal_1 = correcao_1_mensal(year, in_mensal);
+  var out_mensal = correcao_2_mensal(year, out_mensal_1)
+        .set('year', year)
+        .set('collection', 5)
+        .set('biome', biome_name)
+        .set('source', 'gtagua')
+        .set('version', version)
+        .set('cadence', "monthly")
+        .clip(biomLimit);
+        
+Map.addLayer(out_mensal.reduce(ee.Reducer.sum()).selfMask(), {min:1, max:12, palette: blues}, "out mensal", false);
+Map.addLayer(out_mensal.reduce(ee.Reducer.sum()).eq(0).selfMask(), {palette: "black"}, "fpos", false);
+  
+  var out_anual_1 = correcao_1_anual(year, in_anual);
+  var out_anual = correcao_2_anual(year, out_anual_1)
+        .set('year', year)
+        .set('collection', 5)
+        .set('biome', biome_name)
+        .set('source', 'gtagua')
+        .set('version', version)
+        .set('cadence', "annual")
+        .clip(biomLimit);
+
+ Map.addLayer(out_anual.selfMask(), {palette: "blue"}, "out anual", false);
+ Map.addLayer(out_anual.eq(0).selfMask(), {palette: "black"}, "fpos", false);
+ 
+ Map.addLayer(static_fpo, {palette: "black"}, "static fpos", false);
+
+ Export.image.toAsset({
+    image: out_anual, 
+    description: 'AGUA_' + biome_name + '-' + year + '-' + version, 
+    assetId: 'projects/mapbiomas-workspace/TRANSVERSAIS/AGUA5-FT/' + biome_name + '-' + year + '-' + version, 
+    // assetId: 'TestImg_AGUA_' + biome_name + '-' + year + '-' + version,
+    pyramidingPolicy: {
+      'classification': 'mode'
+    },
+    region: biomLimit.first().geometry().bounds(), 
+    scale: 30, 
+    maxPixels: 1e13
+  });
+
+  Export.image.toAsset({
+    image: out_mensal, 
+    description: 'AGUA_' + biome_name + '-' + year + '-'+ version + '_mensal', 
+    assetId: 'projects/mapbiomas-workspace/TRANSVERSAIS/AGUA5-FT/' + biome_name + '-' + year + '-' + version + '_mensal',
+    // assetId: 'TestImg_AGUA_' + biome_name + '-' + year + '-' + version + '_mensal', 
+    pyramidingPolicy: {
+      'classification_1': 'mode',
+      'classification_2': 'mode',
+      'classification_3': 'mode',
+      'classification_4': 'mode',
+      'classification_5': 'mode',
+      'classification_6': 'mode',
+      'classification_7': 'mode',
+      'classification_8': 'mode',
+      'classification_9': 'mode',
+      'classification_10': 'mode',
+      'classification_11': 'mode',
+      'classification_12': 'mode'
+    },
+    region: biomLimit.first().geometry().bounds(), 
+    scale: 30, 
+    maxPixels: 1e13
+  }); 
+}

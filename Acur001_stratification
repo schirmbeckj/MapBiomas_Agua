@@ -1,0 +1,75 @@
+/**** Start of imports. If edited, may not auto-convert in the playground. ****/
+var col = ee.ImageCollection("projects/mapbiomas-workspace/TRANSVERSAIS/AGUA5-FT"),
+    brazil = 
+    /* color: #d63000 */
+    /* shown: false */
+    /* displayProperties: [
+      {
+        "type": "rectangle"
+      }
+    ] */
+    ee.Geometry.Polygon(
+        [[[-74.79479639004013, 5.489030819772432],
+          [-74.79479639004013, -34.12190245259663],
+          [-30.849483890040155, -34.12190245259663],
+          [-30.849483890040155, 5.489030819772432]]], null, false),
+    bioms = ee.FeatureCollection("projects/mapbiomas-workspace/AUXILIAR/biomas-2019");
+/***** End of imports. If edited, may not auto-convert in the playground. *****/
+var constants = [
+  {freqMin:0, freqMax:9, classe: "solo", nrPoints: 86, classeNum:4},
+  {freqMin:10, freqMax:50, classe: "infrequente", nrPoints: 86, classeNum:3}, 
+  {freqMin:50, freqMax:90, classe: "intermitente", nrPoints: 86, classeNum:2},
+  {freqMin:90, freqMax:101, classe: "permanente", nrPoints: 86, classeNum:1},
+  ];
+
+print(constants.length)
+
+var colAnual = col.filter(ee.Filter.eq("version", "5")).filter(ee.Filter.eq("cadence", "annual"));
+var colMensal = col.filter(ee.Filter.eq("version", "5")).filter(ee.Filter.eq("cadence", "monthly"));
+
+var years = ee.List.sequence(1985, 2019, 1);
+var months = years.map(function (year) {
+  var start = ee.Number(year);
+  var end = ee.Number(year).add(ee.Number(11/12));
+  var step = ee.Number(1/12);
+  return ee.List.sequence(start, end, step);
+}).flatten();
+
+var freqTotalAnual = colAnual.sum();
+var freqTotalMensal = colMensal.sum().reduce(ee.Reducer.sum());
+
+var freqTotalAnual_perc = freqTotalAnual.divide(years.size()).multiply(100);
+var freqTotalMensal_perc = freqTotalMensal.divide(months.size()).multiply(100);
+
+var classImgsAnual_0 = constants.map(function (obj) {
+  var img = freqTotalAnual_perc.gte(obj.freqMin).and(freqTotalAnual_perc.lt(obj.freqMax));
+  var binImg = img.multiply(obj.classeNum).float().rename("constant");
+  return binImg.set("classe", obj.classe);
+});
+var classImgsAnual = ee.ImageCollection.fromImages(classImgsAnual_0);
+var imgAnual = classImgsAnual.max();
+
+var blues = ["ffffff", "00ffff", "0000ff", "000040"];
+
+Map.addLayer(ee.Image(1), {palette: "000000"}, "background", true, 0.5);
+Map.addLayer(freqTotalAnual_perc, {min:0, max:100, palette: blues}, "freq", false);
+//Map.addLayer(imgAnual, {min:1, max:constants.length, palette: blues}, "classes anuais", true);
+
+var distImg = imgAnual.unmask(1).gt(1);
+
+var dist250 = distImg.distance(ee.Kernel.euclidean(250, "meters")).lt(250);
+
+var dist500 = distImg.distance(ee.Kernel.euclidean(500, "meters")).lt(500);
+
+var dist5000 = distImg.distance(ee.Kernel.euclidean(4750, "meters")).lt(4750);
+
+var imgFinal = imgAnual.addBands(dist250.multiply(5).selfMask()).addBands(dist500.multiply(6).selfMask()).addBands(dist5000.multiply(7).selfMask())
+  .reduce(ee.Reducer.min());
+  
+var grad = [
+  "000040", "0000ff", "00ffff", "ffffff",
+  "f1a340", "d73027", "a50026"
+  ] ;
+
+Map.addLayer(imgFinal, {palette: grad, min:1, max:7}, "img final");  
+

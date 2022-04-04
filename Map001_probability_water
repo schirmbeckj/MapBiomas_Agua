@@ -1,0 +1,1287 @@
+/**** Start of imports. If edited, may not auto-convert in the playground. ****/
+var l5_col = ee.ImageCollection("LANDSAT/LT05/C01/T1_SR"),
+    l7_col = ee.ImageCollection("LANDSAT/LE07/C01/T1_SR"),
+    l8_col = ee.ImageCollection("LANDSAT/LC08/C01/T1_SR"),
+    table = ee.FeatureCollection("projects/mapbiomas-workspace/AUXILIAR/biomas-2019");
+/***** End of imports. If edited, may not auto-convert in the playground. *****/
+exports.p_img_month_func = function (year, month) {
+
+  l7_col = l7_col.filterDate('1995-01-01', '2012-12-31');
+  
+  var start = ee.Date.fromYMD(year, month, 1);
+  var end = start.advance(1, 'month');
+  
+  var bandnamed = ['blue', 'green', 'red', 'nir', 'swir1', 'swir2'];
+  var bands_l5 = ['B1', 'B2', 'B3', 'B4', 'B5', 'B7'];
+  var bands_l7 = ['B1', 'B2', 'B3', 'B4', 'B5', 'B7'];
+  var bands_l8 = ['B2', 'B3', 'B4', 'B5', 'B6', 'B7'];
+  
+  var rename_bands = function (imgCol, input) {
+    return imgCol.select(input, bandnamed);
+  };
+  
+  var endmembers = [
+      [119.0, 475.0, 169.0, 6250.0, 2399.0, 675.0], /*gv*/
+      [1514.0, 1597.0, 1421.0, 3053.0, 7707.0, 1975.0], /*npv*/
+      [1799.0, 2479.0, 3158.0, 5437.0, 7707.0, 6646.0], /*soil*/
+      [4031.0, 8714.0, 7900.0, 8989.0, 7002.0, 6607.0] /*cloud*/
+  ];
+  
+  var sma = function (image) {
+      
+      var outBandNames = ['gv', 'npv', 'soil', 'cloud'];
+      
+      var fractions = ee.Image(image)
+          .select(bandnamed)
+          .unmix(endmembers)
+          .max(0)
+          .multiply(100)
+          .byte();
+      
+      fractions = fractions.rename(outBandNames);
+      
+      var summed = fractions.expression('b("gv") + b("npv") + b("soil")');
+      
+      var shade = summed
+          .subtract(100)
+          .abs()
+          .byte()
+          .rename("shade");
+      
+      fractions = fractions.addBands(shade);
+      
+      // return ee.Image(fractions.copyProperties(image));
+      return image.addBands(fractions);
+  };
+  
+  var cloudScore = function (image) {
+  
+  var rescale = function (obj) {
+  
+      var image = obj.image.subtract(obj.min).divide(ee.Number(obj.max).subtract(obj.min));
+  
+      return image;
+  };
+  
+      var cloudThresh = 10;
+  
+      // Compute several indicators of cloudiness and take the minimum of them.
+      var score = ee.Image(1.0);
+  
+      // Clouds are reasonably bright in the blue band.
+      score = score.min(rescale({
+          'image': image.select(['blue']),
+          'min': 1000,
+          'max': 3000
+      }));
+  
+      // Clouds are reasonably bright in all visible bands.
+      score = score.min(rescale({
+          'image': image.expression("b('red') + b('green') + b('blue')"),
+          'min': 2000,
+          'max': 8000
+      }));
+  
+      // Clouds are reasonably bright in all infrared bands.
+      score = score.min(rescale({
+          'image': image.expression("b('nir') + b('swir1') + b('swir2')"),
+          'min': 3000,
+          'max': 8000
+      }));
+  
+      // However, clouds are not snow.
+      var ndsi = image.normalizedDifference(['green', 'swir1']);
+  
+      score = score.min(rescale({
+          'image': ndsi,
+          'min': 8000,
+          'max': 6000
+      })).multiply(100).byte();
+  
+      var cond = score.lt(cloudThresh);
+      
+      // var kernel = ee.Kernel.euclidean(2000, 'meters');
+      
+      // var proximity = cond.distance(kernel, false);
+      
+      // cond = cond.remap([0,1], [1,0]).where(proximity.gt(0), 0);
+      
+      return image.updateMask(cond);
+  };
+  
+  var process_image = function (image) {
+    return sma(image).clip(table);
+  };
+  
+  var l5_ready = rename_bands(l5_col, bands_l5).map(process_image);
+  var l7_ready = rename_bands(l7_col, bands_l7).map(process_image);
+  var l8_ready = rename_bands(l8_col, bands_l8).map(process_image);
+  
+  var processed_col = l5_ready.merge(l7_ready).merge(l8_ready).filter(ee.Filter.lte('CLOUD_COVER', 70));
+  
+  var class_1_probs = function (image) {
+    
+    var gv_soil = image.select('gv').addBands(image.select('soil')).reduce(ee.Reducer.sum());
+    
+    var cond_1 = image.select('shade').multiply(0.1).subtract(6.5).clamp(0, 1);
+    var cond_2 = gv_soil.multiply(-0.1).add(1).clamp(0, 1);
+    var cond_3 = image.select('cloud').multiply(-0.1).add(3.5).clamp(0, 1)
+                  .addBands(
+                  image.select('cloud').multiply(0.125).clamp(0, 1)  
+                  ).reduce(ee.Reducer.min());
+    
+    var image_prob = cond_1.addBands(cond_2).addBands(cond_3).reduce(ee.Reducer.mean());
+    
+    return image_prob;
+  };
+  
+  var imgs_prob = processed_col
+    .filterDate(start, end)
+    .map(cloudScore)
+    .map(class_1_probs);
+  
+  var prob_class_1 = imgs_prob.min();
+  
+  return prob_class_1.rename('p_water');
+};
+
+exports.p_year_func = function (year) {
+  
+  l7_col = l7_col.filterDate('1995-01-01', '2012-12-31');
+  
+  // var year = 2000;
+  
+  var bandnamed = ['blue', 'green', 'red', 'nir', 'swir1', 'swir2'];
+  var bands_l5 = ['B1', 'B2', 'B3', 'B4', 'B5', 'B7'];
+  var bands_l7 = ['B1', 'B2', 'B3', 'B4', 'B5', 'B7'];
+  var bands_l8 = ['B2', 'B3', 'B4', 'B5', 'B6', 'B7'];
+  
+  var rename_bands = function (imgCol, input) {
+    return imgCol.select(input, bandnamed);
+  };
+  
+  var endmembers = [
+      [119.0, 475.0, 169.0, 6250.0, 2399.0, 675.0], /*gv*/
+      [1514.0, 1597.0, 1421.0, 3053.0, 7707.0, 1975.0], /*npv*/
+      [1799.0, 2479.0, 3158.0, 5437.0, 7707.0, 6646.0], /*soil*/
+      [4031.0, 8714.0, 7900.0, 8989.0, 7002.0, 6607.0] /*cloud*/
+  ];
+  
+  var sma = function (image) {
+      
+      var outBandNames = ['gv', 'npv', 'soil', 'cloud'];
+      
+      var fractions = ee.Image(image)
+          .select(bandnamed)
+          .unmix(endmembers)
+          .max(0)
+          .multiply(100)
+          .byte();
+      
+      fractions = fractions.rename(outBandNames);
+      
+      var summed = fractions.expression('b("gv") + b("npv") + b("soil")');
+      
+      var shade = summed
+          .subtract(100)
+          .abs()
+          .byte()
+          .rename("shade");
+      
+      fractions = fractions.addBands(shade);
+      
+      // return ee.Image(fractions.copyProperties(image));
+      return image.addBands(fractions);
+  };
+  
+  var cloudScore = function (image) {
+  
+  var rescale = function (obj) {
+  
+      var image = obj.image.subtract(obj.min).divide(ee.Number(obj.max).subtract(obj.min));
+  
+      return image;
+  };
+  
+      var cloudThresh = 10;
+  
+      // Compute several indicators of cloudiness and take the minimum of them.
+      var score = ee.Image(1.0);
+  
+      // Clouds are reasonably bright in the blue band.
+      score = score.min(rescale({
+          'image': image.select(['blue']),
+          'min': 1000,
+          'max': 3000
+      }));
+  
+      // Clouds are reasonably bright in all visible bands.
+      score = score.min(rescale({
+          'image': image.expression("b('red') + b('green') + b('blue')"),
+          'min': 2000,
+          'max': 8000
+      }));
+  
+      // Clouds are reasonably bright in all infrared bands.
+      score = score.min(rescale({
+          'image': image.expression("b('nir') + b('swir1') + b('swir2')"),
+          'min': 3000,
+          'max': 8000
+      }));
+  
+      // However, clouds are not snow.
+      var ndsi = image.normalizedDifference(['green', 'swir1']);
+  
+      score = score.min(rescale({
+          'image': ndsi,
+          'min': 8000,
+          'max': 6000
+      })).multiply(100).byte();
+  
+      var cond = score.lt(cloudThresh);
+      
+      // var kernel = ee.Kernel.euclidean(2000, 'meters');
+      
+      // var proximity = cond.distance(kernel, false);
+      
+      // cond = cond.remap([0,1], [1,0]).where(proximity.gt(0), 0);
+      
+      return image.updateMask(cond);
+  };
+  
+  var process_image = function (image) {
+    return sma(image).clip(table);
+  };
+  
+  var class_1_probs = function (image) {
+    
+    var gv_soil = image.select('gv').addBands(image.select('soil')).reduce(ee.Reducer.sum());
+    
+    var cond_1 = image.select('shade').multiply(0.1).subtract(6.5).clamp(0, 1);
+    var cond_2 = gv_soil.multiply(-0.125).add(1).clamp(0, 1);
+    var cond_3 = image.select('cloud').multiply(-0.1).add(3.5).clamp(0, 1)
+                  .addBands(
+                  image.select('cloud').multiply(0.125).clamp(0, 1)  
+                  ).reduce(ee.Reducer.min());
+    
+    var image_prob = cond_1.addBands(cond_2).addBands(cond_3).reduce(ee.Reducer.mean());
+    
+    return image_prob;
+  };
+  
+  var water_year_month = function (ano, mes) {
+  
+  var start = ee.Date.fromYMD(ano, mes, 1);
+  var end = start.advance(1, 'month');
+  
+  var l5_ready = rename_bands(l5_col, bands_l5).map(process_image);
+  var l7_ready = rename_bands(l7_col, bands_l7).map(process_image);
+  var l8_ready = rename_bands(l8_col, bands_l8).map(process_image);
+  
+  var processed_col = l5_ready.merge(l7_ready).merge(l8_ready).filter(ee.Filter.lte('CLOUD_COVER', 70));
+  
+  var imgs_prob = processed_col
+    .filterDate(start, end)
+    .map(cloudScore)
+    .map(class_1_probs);
+  
+  var prob_class_1 = imgs_prob.min();
+  
+  return prob_class_1;
+  };
+  
+  var annual_freq = water_year_month(year, 1)
+    .addBands(water_year_month(year, 2))
+    .addBands(water_year_month(year, 3))
+    .addBands(water_year_month(year, 4))
+    .addBands(water_year_month(year, 5))
+    .addBands(water_year_month(year, 6))
+    .addBands(water_year_month(year, 7))
+    .addBands(water_year_month(year, 8))
+    .addBands(water_year_month(year, 9))
+    .addBands(water_year_month(year, 10))
+    .addBands(water_year_month(year, 11))
+    .addBands(water_year_month(year, 12))
+    .reduce(ee.Reducer.mean());
+
+  return annual_freq.rename('p_year');
+};
+
+exports.p_year12_func = function (year, month) {
+  
+  l7_col = l7_col.filterDate('1995-01-01', '2012-12-31');
+  
+  // var year = 2000;
+  
+  var bandnamed = ['blue', 'green', 'red', 'nir', 'swir1', 'swir2'];
+  var bands_l5 = ['B1', 'B2', 'B3', 'B4', 'B5', 'B7'];
+  var bands_l7 = ['B1', 'B2', 'B3', 'B4', 'B5', 'B7'];
+  var bands_l8 = ['B2', 'B3', 'B4', 'B5', 'B6', 'B7'];
+  
+  var rename_bands = function (imgCol, input) {
+    return imgCol.select(input, bandnamed);
+  };
+  
+  var endmembers = [
+      [119.0, 475.0, 169.0, 6250.0, 2399.0, 675.0], /*gv*/
+      [1514.0, 1597.0, 1421.0, 3053.0, 7707.0, 1975.0], /*npv*/
+      [1799.0, 2479.0, 3158.0, 5437.0, 7707.0, 6646.0], /*soil*/
+      [4031.0, 8714.0, 7900.0, 8989.0, 7002.0, 6607.0] /*cloud*/
+  ];
+  
+  var sma = function (image) {
+      
+      var outBandNames = ['gv', 'npv', 'soil', 'cloud'];
+      
+      var fractions = ee.Image(image)
+          .select(bandnamed)
+          .unmix(endmembers)
+          .max(0)
+          .multiply(100)
+          .byte();
+      
+      fractions = fractions.rename(outBandNames);
+      
+      var summed = fractions.expression('b("gv") + b("npv") + b("soil")');
+      
+      var shade = summed
+          .subtract(100)
+          .abs()
+          .byte()
+          .rename("shade");
+      
+      fractions = fractions.addBands(shade);
+      
+      // return ee.Image(fractions.copyProperties(image));
+      return image.addBands(fractions);
+  };
+  
+  var cloudScore = function (image) {
+  
+  var rescale = function (obj) {
+  
+      var image = obj.image.subtract(obj.min).divide(ee.Number(obj.max).subtract(obj.min));
+  
+      return image;
+  };
+  
+      var cloudThresh = 10;
+  
+      // Compute several indicators of cloudiness and take the minimum of them.
+      var score = ee.Image(1.0);
+  
+      // Clouds are reasonably bright in the blue band.
+      score = score.min(rescale({
+          'image': image.select(['blue']),
+          'min': 1000,
+          'max': 3000
+      }));
+  
+      // Clouds are reasonably bright in all visible bands.
+      score = score.min(rescale({
+          'image': image.expression("b('red') + b('green') + b('blue')"),
+          'min': 2000,
+          'max': 8000
+      }));
+  
+      // Clouds are reasonably bright in all infrared bands.
+      score = score.min(rescale({
+          'image': image.expression("b('nir') + b('swir1') + b('swir2')"),
+          'min': 3000,
+          'max': 8000
+      }));
+  
+      // However, clouds are not snow.
+      var ndsi = image.normalizedDifference(['green', 'swir1']);
+  
+      score = score.min(rescale({
+          'image': ndsi,
+          'min': 8000,
+          'max': 6000
+      })).multiply(100).byte();
+  
+      var cond = score.lt(cloudThresh);
+      
+      // var kernel = ee.Kernel.euclidean(2000, 'meters');
+      
+      // var proximity = cond.distance(kernel, false);
+      
+      // cond = cond.remap([0,1], [1,0]).where(proximity.gt(0), 0);
+      
+      return image.updateMask(cond);
+  };
+  
+  var process_image = function (image) {
+    return sma(image).clip(table);
+  };
+  
+  var class_1_probs = function (image) {
+    
+    var gv_soil = image.select('gv').addBands(image.select('soil')).reduce(ee.Reducer.sum());
+    
+    var cond_1 = image.select('shade').multiply(0.1).subtract(6.5).clamp(0, 1);
+    var cond_2 = gv_soil.multiply(-0.125).add(1).clamp(0, 1);
+    var cond_3 = image.select('cloud').multiply(-0.1).add(3.5).clamp(0, 1)
+                  .addBands(
+                  image.select('cloud').multiply(0.125).clamp(0, 1)  
+                  ).reduce(ee.Reducer.min());
+    
+    var image_prob = cond_1.addBands(cond_2).addBands(cond_3).reduce(ee.Reducer.mean());
+    
+    return image_prob;
+  };
+  
+  var water_year_month = function (ano, mes) {
+  
+  var start = ee.Date.fromYMD(ano, mes, 1);
+  var end = start.advance(1, 'month');
+  
+  var l5_ready = rename_bands(l5_col, bands_l5).map(process_image);
+  var l7_ready = rename_bands(l7_col, bands_l7).map(process_image);
+  var l8_ready = rename_bands(l8_col, bands_l8).map(process_image);
+  
+  var processed_col = l5_ready.merge(l7_ready).merge(l8_ready).filter(ee.Filter.lte('CLOUD_COVER', 70));
+  
+  var imgs_prob = processed_col
+    .filterDate(start, end)
+    .map(cloudScore)
+    .map(class_1_probs);
+  
+  var prob_class_1 = imgs_prob.min();
+  
+  return prob_class_1;
+  };
+  
+  var define_month = function (mois, subtraction) {
+    var newNr = ee.Number(mois).subtract(subtraction);
+    return ee.Number(
+      ee.Algorithms.If(
+        newNr.lte(0),
+        ee.Number(12).add(newNr),
+        newNr
+        )
+      );
+  };
+  
+  var define_year = function (jahr, monat, subtraction) {
+    var newNr = ee.Number(monat).subtract(subtraction);
+    return ee.Number(
+      ee.Algorithms.If(
+        newNr.lte(0),
+        ee.Number(jahr).subtract(1),
+        jahr
+        )
+      );
+  };  
+  
+  var year1 = define_year(year, month, 1);
+  var month1 = define_month(month, 1);
+  var year2 = define_year(year, month, 2);
+  var month2 = define_month(month, 2);
+  var year3 = define_year(year, month, 3);
+  var month3 = define_month(month, 3);
+  var year4 = define_year(year, month, 4);
+  var month4 = define_month(month, 4);
+  var year5 = define_year(year, month, 5);
+  var month5 = define_month(month, 5);
+  var year6 = define_year(year, month, 6);
+  var month6 = define_month(month, 6);
+  var year7 = define_year(year, month, 7);
+  var month7 = define_month(month, 7);
+  var year8 = define_year(year, month, 8);
+  var month8 = define_month(month, 8);
+  var year9 = define_year(year, month, 9);
+  var month9 = define_month(month, 9);
+  var year10 = define_year(year, month, 10);
+  var month10 = define_month(month, 10);
+  var year11 = define_year(year, month, 11);
+  var month11 = define_month(month, 11);
+  var year12 = define_year(year, month, 12);
+  var month12 = define_month(month, 12);
+  
+  
+  var annual_freq = water_year_month(year12, month12)
+    .addBands(water_year_month(year11, month11))
+    .addBands(water_year_month(year10, month10))
+    .addBands(water_year_month(year9, month9))
+    .addBands(water_year_month(year8, month8))
+    .addBands(water_year_month(year7, month7))
+    .addBands(water_year_month(year6, month6))
+    .addBands(water_year_month(year5, month5))
+    .addBands(water_year_month(year4, month4))
+    .addBands(water_year_month(year3, month3))
+    .addBands(water_year_month(year2, month2))
+    .addBands(water_year_month(year1, month1))
+    .reduce(ee.Reducer.mean());
+
+  return annual_freq.rename('p_year');
+};
+
+exports.p_month_func = function (year, month) {
+
+l7_col = l7_col.filterDate('1995-01-01', '2012-12-31');
+
+// var year = 2000;
+// var month = 12;
+
+var bandnamed = ['blue', 'green', 'red', 'nir', 'swir1', 'swir2'];
+var bands_l5 = ['B1', 'B2', 'B3', 'B4', 'B5', 'B7'];
+var bands_l7 = ['B1', 'B2', 'B3', 'B4', 'B5', 'B7'];
+var bands_l8 = ['B2', 'B3', 'B4', 'B5', 'B6', 'B7'];
+
+var rename_bands = function (imgCol, input) {
+  return imgCol.select(input, bandnamed);
+};
+
+var endmembers = [
+    [119.0, 475.0, 169.0, 6250.0, 2399.0, 675.0], /*gv*/
+    [1514.0, 1597.0, 1421.0, 3053.0, 7707.0, 1975.0], /*npv*/
+    [1799.0, 2479.0, 3158.0, 5437.0, 7707.0, 6646.0], /*soil*/
+    [4031.0, 8714.0, 7900.0, 8989.0, 7002.0, 6607.0] /*cloud*/
+];
+
+var sma = function (image) {
+    
+    var outBandNames = ['gv', 'npv', 'soil', 'cloud'];
+    
+    var fractions = ee.Image(image)
+        .select(bandnamed)
+        .unmix(endmembers)
+        .max(0)
+        .multiply(100)
+        .byte();
+    
+    fractions = fractions.rename(outBandNames);
+    
+    var summed = fractions.expression('b("gv") + b("npv") + b("soil")');
+    
+    var shade = summed
+        .subtract(100)
+        .abs()
+        .byte()
+        .rename("shade");
+    
+    fractions = fractions.addBands(shade);
+    
+    // return ee.Image(fractions.copyProperties(image));
+    return image.addBands(fractions);
+};
+
+var cloudScore = function (image) {
+
+var rescale = function (obj) {
+
+    var image = obj.image.subtract(obj.min).divide(ee.Number(obj.max).subtract(obj.min));
+
+    return image;
+};
+
+    var cloudThresh = 10;
+
+    // Compute several indicators of cloudiness and take the minimum of them.
+    var score = ee.Image(1.0);
+
+    // Clouds are reasonably bright in the blue band.
+    score = score.min(rescale({
+        'image': image.select(['blue']),
+        'min': 1000,
+        'max': 3000
+    }));
+
+    // Clouds are reasonably bright in all visible bands.
+    score = score.min(rescale({
+        'image': image.expression("b('red') + b('green') + b('blue')"),
+        'min': 2000,
+        'max': 8000
+    }));
+
+    // Clouds are reasonably bright in all infrared bands.
+    score = score.min(rescale({
+        'image': image.expression("b('nir') + b('swir1') + b('swir2')"),
+        'min': 3000,
+        'max': 8000
+    }));
+
+    // However, clouds are not snow.
+    var ndsi = image.normalizedDifference(['green', 'swir1']);
+
+    score = score.min(rescale({
+        'image': ndsi,
+        'min': 8000,
+        'max': 6000
+    })).multiply(100).byte();
+
+    var cond = score.lt(cloudThresh);
+    
+    // var kernel = ee.Kernel.euclidean(2000, 'meters');
+    
+    // var proximity = cond.distance(kernel, false);
+    
+    // cond = cond.remap([0,1], [1,0]).where(proximity.gt(0), 0);
+    
+    return image.updateMask(cond);
+};
+
+var process_image = function (image) {
+  return sma(image).clip(table);
+};
+
+var class_1_probs = function (image) {
+  
+  var gv_soil = image.select('gv').addBands(image.select('soil')).reduce(ee.Reducer.sum());
+  
+  var cond_1 = image.select('shade').multiply(0.1).subtract(6.5).clamp(0, 1);
+  var cond_2 = gv_soil.multiply(-0.125).add(1).clamp(0, 1);
+  var cond_3 = image.select('cloud').multiply(-0.1).add(3.5).clamp(0, 1)
+                .addBands(
+                image.select('cloud').multiply(0.125).clamp(0, 1)  
+                ).reduce(ee.Reducer.min());
+  
+  var image_prob = cond_1.addBands(cond_2).addBands(cond_3).reduce(ee.Reducer.mean());
+  
+  return image_prob;
+};
+
+var water_year_month = function (ano, mes) {
+
+  var start = ee.Date.fromYMD(ano, mes, 1);
+  var end = start.advance(1, 'month');
+  
+  var l5_ready = rename_bands(l5_col, bands_l5).map(process_image);
+  var l7_ready = rename_bands(l7_col, bands_l7).map(process_image);
+  var l8_ready = rename_bands(l8_col, bands_l8).map(process_image);
+  
+  var processed_col = l5_ready.merge(l7_ready).merge(l8_ready).filter(ee.Filter.lte('CLOUD_COVER', 70));
+  
+  var imgs_prob = processed_col
+    .filterDate(start, end)
+    .map(cloudScore)
+    .map(class_1_probs);
+  
+  var prob_class_1 = imgs_prob.min();
+  
+  var water = prob_class_1.gte(0.5).selfMask();
+  
+  return prob_class_1;
+};
+
+var year_5 = ee.Number(year).subtract(5);
+var year_4 = ee.Number(year).subtract(4);
+var year_3 = ee.Number(year).subtract(3);
+var year_2 = ee.Number(year).subtract(2);
+var year_1 = ee.Number(year).subtract(1);
+
+var year5 = ee.Number(year).add(5);
+var year4 = ee.Number(year).add(4);
+var year3 = ee.Number(year).add(3);
+var year2 = ee.Number(year).add(2);
+var year1 = ee.Number(year).add(1);
+
+year5 = ee.Number(
+  ee.Algorithms.If(
+    year5.gte(2021),
+    2021,
+    year5
+  ));
+  
+year4 = ee.Number(
+  ee.Algorithms.If(
+    year4.gte(2021),
+    2021,
+    year4
+  ));
+  
+year3 = ee.Number(
+  ee.Algorithms.If(
+    year3.gte(2021),
+    2021,
+    year3
+  ));
+  
+year2 = ee.Number(
+  ee.Algorithms.If(
+    year2.gte(2021),
+    2021,
+    year2
+  ));
+  
+year1 = ee.Number(
+  ee.Algorithms.If(
+    year1.gte(2021),
+    2021,
+    year1
+  ));
+
+
+year_5 = ee.Number(
+  ee.Algorithms.If(
+    year_5.lte(1985),
+    1985,
+    year_5
+  ));
+  
+year_4 = ee.Number(
+  ee.Algorithms.If(
+    year_4.lte(1985),
+    1985,
+    year_4
+  ));
+  
+year_3 = ee.Number(
+  ee.Algorithms.If(
+    year_3.lte(1985),
+    1985,
+    year_3
+  ));
+  
+year_2 = ee.Number(
+  ee.Algorithms.If(
+    year_2.lte(1985),
+    1985,
+    year_2
+  ));
+  
+year_1 = ee.Number(
+  ee.Algorithms.If(
+    year_1.lte(1985),
+    1985,
+    year_1
+  ));
+
+
+var month_freq = water_year_month(year_5, month)
+  .addBands(water_year_month(year_4, month))
+  .addBands(water_year_month(year_3, month))
+  .addBands(water_year_month(year_2, month))
+  .addBands(water_year_month(year_1, month))
+  .addBands(water_year_month(year, month))
+  .addBands(water_year_month(year1, month))
+  .addBands(water_year_month(year2, month))
+  .addBands(water_year_month(year3, month))
+  .addBands(water_year_month(year4, month))
+  .addBands(water_year_month(year5, month))
+  .reduce(ee.Reducer.mean());
+
+return month_freq.rename('p_month');
+};
+
+exports.t_img_month_func = function (year, month) {
+
+l7_col = l7_col.filterDate('1995-01-01', '2012-12-31');
+
+// var year = 2000;
+// var month = 12;
+
+var start = ee.Date.fromYMD(year, month, 1);
+var end = start.advance(1, 'month');
+
+var bandnamed = ['blue', 'green', 'red', 'nir', 'swir1', 'swir2'];
+var bands_l5 = ['B1', 'B2', 'B3', 'B4', 'B5', 'B7'];
+var bands_l7 = ['B1', 'B2', 'B3', 'B4', 'B5', 'B7'];
+var bands_l8 = ['B2', 'B3', 'B4', 'B5', 'B6', 'B7'];
+
+var rename_bands = function (imgCol, input) {
+  return imgCol.select(input, bandnamed);
+};
+
+var endmembers = [
+    [119.0, 475.0, 169.0, 6250.0, 2399.0, 675.0], /*gv*/
+    [1514.0, 1597.0, 1421.0, 3053.0, 7707.0, 1975.0], /*npv*/
+    [1799.0, 2479.0, 3158.0, 5437.0, 7707.0, 6646.0], /*soil*/
+    [4031.0, 8714.0, 7900.0, 8989.0, 7002.0, 6607.0] /*cloud*/
+];
+
+var sma = function (image) {
+    
+    var outBandNames = ['gv', 'npv', 'soil', 'cloud'];
+    
+    var fractions = ee.Image(image)
+        .select(bandnamed)
+        .unmix(endmembers)
+        .max(0)
+        .multiply(100)
+        .byte();
+    
+    fractions = fractions.rename(outBandNames);
+    
+    var summed = fractions.expression('b("gv") + b("npv") + b("soil")');
+    
+    var shade = summed
+        .subtract(100)
+        .abs()
+        .byte()
+        .rename("shade");
+    
+    fractions = fractions.addBands(shade);
+    
+    // return ee.Image(fractions.copyProperties(image));
+    return image.addBands(fractions);
+};
+
+var cloudScore = function (image) {
+
+var rescale = function (obj) {
+
+    var image = obj.image.subtract(obj.min).divide(ee.Number(obj.max).subtract(obj.min));
+
+    return image;
+};
+
+    var cloudThresh = 10;
+
+    // Compute several indicators of cloudiness and take the minimum of them.
+    var score = ee.Image(1.0);
+
+    // Clouds are reasonably bright in the blue band.
+    score = score.min(rescale({
+        'image': image.select(['blue']),
+        'min': 1000,
+        'max': 3000
+    }));
+
+    // Clouds are reasonably bright in all visible bands.
+    score = score.min(rescale({
+        'image': image.expression("b('red') + b('green') + b('blue')"),
+        'min': 2000,
+        'max': 8000
+    }));
+
+    // Clouds are reasonably bright in all infrared bands.
+    score = score.min(rescale({
+        'image': image.expression("b('nir') + b('swir1') + b('swir2')"),
+        'min': 3000,
+        'max': 8000
+    }));
+
+    // However, clouds are not snow.
+    var ndsi = image.normalizedDifference(['green', 'swir1']);
+
+    score = score.min(rescale({
+        'image': ndsi,
+        'min': 8000,
+        'max': 6000
+    })).multiply(100).byte();
+
+    var cond = score.lt(cloudThresh);
+    
+    // var kernel = ee.Kernel.euclidean(2000, 'meters');
+    
+    // var proximity = cond.distance(kernel, false);
+    
+    // cond = cond.remap([0,1], [1,0]).where(proximity.gt(0), 0);
+    
+    return image.updateMask(cond);
+};
+
+var process_image = function (image) {
+  return sma(image).clip(table);
+};
+
+var l5_ready = rename_bands(l5_col, bands_l5).map(process_image);
+var l7_ready = rename_bands(l7_col, bands_l7).map(process_image);
+var l8_ready = rename_bands(l8_col, bands_l8).map(process_image);
+
+var processed_col = l5_ready.merge(l7_ready).merge(l8_ready).filter(ee.Filter.lte('CLOUD_COVER', 70));
+
+var imgs = processed_col.filterDate(start, end).map(cloudScore);
+
+var class_1_t = function (image) {
+  
+  var gv_soil = image.select('gv').addBands(image.select('soil')).reduce(ee.Reducer.sum());
+  
+  var cond_1 = image.select('shade').gte(65);
+  var cond_2 = gv_soil.lte(10);
+  var cond_3 = image.select('cloud').lte(25);
+  
+  var image_t = cond_1.addBands(cond_2).addBands(cond_3).reduce(ee.Reducer.sum()).eq(3).selfMask();
+  
+  return image_t;
+};
+
+
+var imgs_prob = processed_col
+  .filterDate(start, end)
+  .map(cloudScore)
+  .map(class_1_t);
+
+var t_class_1 = imgs_prob.mosaic();
+
+return t_class_1.rename('t_water');
+};
+
+exports.rgb_img_month_func = function (year, month) {
+
+l7_col = l7_col.filterDate('1995-01-01', '2012-12-31');
+
+// var year = 2000;
+// var month = 12;
+
+var start = ee.Date.fromYMD(year, month, 1);
+var end = start.advance(1, 'month');
+
+var bandnamed = ['blue', 'green', 'red', 'nir', 'swir1', 'swir2'];
+var bands_l5 = ['B1', 'B2', 'B3', 'B4', 'B5', 'B7'];
+var bands_l7 = ['B1', 'B2', 'B3', 'B4', 'B5', 'B7'];
+var bands_l8 = ['B2', 'B3', 'B4', 'B5', 'B6', 'B7'];
+
+var rename_bands = function (imgCol, input) {
+  return imgCol.select(input, bandnamed);
+};
+
+var endmembers = [
+    [119.0, 475.0, 169.0, 6250.0, 2399.0, 675.0], /*gv*/
+    [1514.0, 1597.0, 1421.0, 3053.0, 7707.0, 1975.0], /*npv*/
+    [1799.0, 2479.0, 3158.0, 5437.0, 7707.0, 6646.0], /*soil*/
+    [4031.0, 8714.0, 7900.0, 8989.0, 7002.0, 6607.0] /*cloud*/
+];
+
+var sma = function (image) {
+    
+    var outBandNames = ['gv', 'npv', 'soil', 'cloud'];
+    
+    var fractions = ee.Image(image)
+        .select(bandnamed)
+        .unmix(endmembers)
+        .max(0)
+        .multiply(100)
+        .byte();
+    
+    fractions = fractions.rename(outBandNames);
+    
+    var summed = fractions.expression('b("gv") + b("npv") + b("soil")');
+    
+    var shade = summed
+        .subtract(100)
+        .abs()
+        .byte()
+        .rename("shade");
+    
+    fractions = fractions.addBands(shade);
+    
+    // return ee.Image(fractions.copyProperties(image));
+    return image.addBands(fractions);
+};
+
+var cloudScore = function (image) {
+
+var rescale = function (obj) {
+
+    var image = obj.image.subtract(obj.min).divide(ee.Number(obj.max).subtract(obj.min));
+
+    return image;
+};
+
+    var cloudThresh = 10;
+
+    // Compute several indicators of cloudiness and take the minimum of them.
+    var score = ee.Image(1.0);
+
+    // Clouds are reasonably bright in the blue band.
+    score = score.min(rescale({
+        'image': image.select(['blue']),
+        'min': 1000,
+        'max': 3000
+    }));
+
+    // Clouds are reasonably bright in all visible bands.
+    score = score.min(rescale({
+        'image': image.expression("b('red') + b('green') + b('blue')"),
+        'min': 2000,
+        'max': 8000
+    }));
+
+    // Clouds are reasonably bright in all infrared bands.
+    score = score.min(rescale({
+        'image': image.expression("b('nir') + b('swir1') + b('swir2')"),
+        'min': 3000,
+        'max': 8000
+    }));
+
+    // However, clouds are not snow.
+    var ndsi = image.normalizedDifference(['green', 'swir1']);
+
+    score = score.min(rescale({
+        'image': ndsi,
+        'min': 8000,
+        'max': 6000
+    })).multiply(100).byte();
+
+    var cond = score.lt(cloudThresh);
+    
+    // var kernel = ee.Kernel.euclidean(2000, 'meters');
+    
+    // var proximity = cond.distance(kernel, false);
+    
+    // cond = cond.remap([0,1], [1,0]).where(proximity.gt(0), 0);
+    
+    return image.updateMask(cond);
+};
+
+var process_image = function (image) {
+  return sma(image).clip(table);
+};
+
+var l5_ready = rename_bands(l5_col, bands_l5).map(process_image);
+var l7_ready = rename_bands(l7_col, bands_l7).map(process_image);
+var l8_ready = rename_bands(l8_col, bands_l8).map(process_image);
+
+var processed_col = l5_ready.merge(l7_ready).merge(l8_ready).filter(ee.Filter.lte('CLOUD_COVER', 70));
+
+var imgs = processed_col.filterDate(start, end).map(cloudScore);
+
+var rgb = imgs.mosaic()//.select(['red', 'green', 'blue']);
+
+return rgb;
+};
+
+exports.sediment_month_func = function (year, month) {
+
+l7_col = l7_col.filterDate('1995-01-01', '2012-12-31');
+
+// var year = 2000;
+// var month = 12;
+
+var bandnamed = ['blue', 'green', 'red', 'nir', 'swir1', 'swir2'];
+var bands_l5 = ['B1', 'B2', 'B3', 'B4', 'B5', 'B7'];
+var bands_l7 = ['B1', 'B2', 'B3', 'B4', 'B5', 'B7'];
+var bands_l8 = ['B2', 'B3', 'B4', 'B5', 'B6', 'B7'];
+
+var rename_bands = function (imgCol, input) {
+  return imgCol.select(input, bandnamed);
+};
+
+var endmembers = [
+    [119.0, 475.0, 169.0, 6250.0, 2399.0, 675.0], /*gv*/
+    [1514.0, 1597.0, 1421.0, 3053.0, 7707.0, 1975.0], /*npv*/
+    [1799.0, 2479.0, 3158.0, 5437.0, 7707.0, 6646.0], /*soil*/
+    [4031.0, 8714.0, 7900.0, 8989.0, 7002.0, 6607.0] /*cloud*/
+];
+
+var sma = function (image) {
+    
+    var outBandNames = ['gv', 'npv', 'soil', 'cloud'];
+    
+    var fractions = ee.Image(image)
+        .select(bandnamed)
+        .unmix(endmembers)
+        .max(0)
+        .multiply(100)
+        .byte();
+    
+    fractions = fractions.rename(outBandNames);
+    
+    var summed = fractions.expression('b("gv") + b("npv") + b("soil")');
+    
+    var shade = summed
+        .subtract(100)
+        .abs()
+        .byte()
+        .rename("shade");
+    
+    fractions = fractions.addBands(shade);
+    
+    // return ee.Image(fractions.copyProperties(image));
+    return image.addBands(fractions);
+};
+
+var cloudScore = function (image) {
+
+var rescale = function (obj) {
+
+    var image = obj.image.subtract(obj.min).divide(ee.Number(obj.max).subtract(obj.min));
+
+    return image;
+};
+
+    var cloudThresh = 10;
+
+    // Compute several indicators of cloudiness and take the minimum of them.
+    var score = ee.Image(1.0);
+
+    // Clouds are reasonably bright in the blue band.
+    score = score.min(rescale({
+        'image': image.select(['blue']),
+        'min': 1000,
+        'max': 3000
+    }));
+
+    // Clouds are reasonably bright in all visible bands.
+    score = score.min(rescale({
+        'image': image.expression("b('red') + b('green') + b('blue')"),
+        'min': 2000,
+        'max': 8000
+    }));
+
+    // Clouds are reasonably bright in all infrared bands.
+    score = score.min(rescale({
+        'image': image.expression("b('nir') + b('swir1') + b('swir2')"),
+        'min': 3000,
+        'max': 8000
+    }));
+
+    // However, clouds are not snow.
+    var ndsi = image.normalizedDifference(['green', 'swir1']);
+
+    score = score.min(rescale({
+        'image': ndsi,
+        'min': 8000,
+        'max': 6000
+    })).multiply(100).byte();
+
+    var cond = score.lt(cloudThresh);
+    
+    // var kernel = ee.Kernel.euclidean(2000, 'meters');
+    
+    // var proximity = cond.distance(kernel, false);
+    
+    // cond = cond.remap([0,1], [1,0]).where(proximity.gt(0), 0);
+    
+    return image.updateMask(cond);
+};
+
+var process_image = function (image) {
+  return sma(image).clip(table);
+};
+
+var sum_vis_func = function (image) {
+  
+  var gv_soil = image.select('gv').addBands(image.select('soil')).reduce(ee.Reducer.sum());
+  
+  var cond_1 = image.select('red');
+  var cond_2 = image.select('green');
+  var cond_3 = image.select('blue');
+  
+  var image_vis_sum = cond_1.addBands(cond_2).addBands(cond_3).reduce(ee.Reducer.sum());
+  
+  return image_vis_sum.rename('sum_vis');
+};
+
+var sediment_year_month = function (ano, mes) {
+
+  var start = ee.Date.fromYMD(ano, mes, 1);
+  var end = start.advance(1, 'month');
+  
+  var l5_ready = rename_bands(l5_col, bands_l5).map(process_image);
+  var l7_ready = rename_bands(l7_col, bands_l7).map(process_image);
+  var l8_ready = rename_bands(l8_col, bands_l8).map(process_image);
+  
+  var processed_col = l5_ready.merge(l7_ready).merge(l8_ready).filter(ee.Filter.lte('CLOUD_COVER', 70));
+  
+  var imgs_sum_vis = processed_col
+    .filterDate(start, end)
+    .map(cloudScore)
+    .map(sum_vis_func);
+  
+  var imgs_sum_vis_min = imgs_sum_vis.min().clamp(1000, 4000);
+  
+  imgs_sum_vis_min = imgs_sum_vis_min.subtract(1000);
+  imgs_sum_vis_min = imgs_sum_vis_min.divide(3000).multiply(10).round();
+  
+  var col = ee.ImageCollection("users/wwfrioparaguai/MapBiomasAGUA/iteration_2");  
+  col = col.map(function (i) {
+    return i.set('year', ee.Number.parse(ee.String(i.get('system:index')).slice(12)));
+  });
+  var water = col.filter(ee.Filter.eq('year', ano)).mosaic().select('w_' + mes + '_w_' + mes);
+  
+  return imgs_sum_vis_min.updateMask(water);
+};
+
+var year_5 = ee.Number(year).subtract(5);
+var year_4 = ee.Number(year).subtract(4);
+var year_3 = ee.Number(year).subtract(3);
+var year_2 = ee.Number(year).subtract(2);
+var year_1 = ee.Number(year).subtract(1);
+
+var year5 = ee.Number(year).add(5);
+var year4 = ee.Number(year).add(4);
+var year3 = ee.Number(year).add(3);
+var year2 = ee.Number(year).add(2);
+var year1 = ee.Number(year).add(1);
+
+year5 = ee.Number(
+  ee.Algorithms.If(
+    year5.gte(2019),
+    2019,
+    year5
+  ));
+  
+year4 = ee.Number(
+  ee.Algorithms.If(
+    year4.gte(2019),
+    2019,
+    year4
+  ));
+  
+year3 = ee.Number(
+  ee.Algorithms.If(
+    year3.gte(2019),
+    2019,
+    year3
+  ));
+  
+year2 = ee.Number(
+  ee.Algorithms.If(
+    year2.gte(2019),
+    2019,
+    year2
+  ));
+  
+year1 = ee.Number(
+  ee.Algorithms.If(
+    year1.gte(2019),
+    2019,
+    year1
+  ));
+
+
+year_5 = ee.Number(
+  ee.Algorithms.If(
+    year_5.lte(1985),
+    1985,
+    year_5
+  ));
+  
+year_4 = ee.Number(
+  ee.Algorithms.If(
+    year_4.lte(1985),
+    1985,
+    year_4
+  ));
+  
+year_3 = ee.Number(
+  ee.Algorithms.If(
+    year_3.lte(1985),
+    1985,
+    year_3
+  ));
+  
+year_2 = ee.Number(
+  ee.Algorithms.If(
+    year_2.lte(1985),
+    1985,
+    year_2
+  ));
+  
+year_1 = ee.Number(
+  ee.Algorithms.If(
+    year_1.lte(1985),
+    1985,
+    year_1
+  ));
+
+
+var month_freq = sediment_year_month(year_5, month)
+  .addBands(sediment_year_month(year_4, month))
+  .addBands(sediment_year_month(year_3, month))
+  .addBands(sediment_year_month(year_2, month))
+  .addBands(sediment_year_month(year_1, month))
+  .addBands(sediment_year_month(year, month))
+  .addBands(sediment_year_month(year1, month))
+  .addBands(sediment_year_month(year2, month))
+  .addBands(sediment_year_month(year3, month))
+  .addBands(sediment_year_month(year4, month))
+  .addBands(sediment_year_month(year5, month))
+  .reduce(ee.Reducer.mode());
+
+return month_freq.rename('sediment_month');
+};

@@ -1,0 +1,72 @@
+var biom = 4;
+
+var biom_4s = [
+'NONE', 'AMAZ', 'CAAT', 'CERR', 'MATA', 'PAMP', 'PANT'   
+];
+var biom_4 = biom_4s[biom];
+
+var pontos_6 = ee.FeatureCollection('projects/mapbiomas-workspace/AMOSTRAS/GTAGUA/amostras_pantanal_VeT');
+var pontos_5 = ee.FeatureCollection('projects/mapbiomas-workspace/AMOSTRAS/GTAGUA/amostras_pampa_VeT');
+var pontos_4 = ee.FeatureCollection('projects/mapbiomas-workspace/AMOSTRAS/GTAGUA/amostras_mataatlantica_VeT');
+var pontos_3 = ee.FeatureCollection('projects/mapbiomas-workspace/AMOSTRAS/GTAGUA/amostras_cerrado_VeT');
+var pontos_2 = ee.FeatureCollection('projects/mapbiomas-workspace/AMOSTRAS/GTAGUA/amostras_caatinga_VeT');
+var pontos_1 = ee.FeatureCollection('projects/mapbiomas-workspace/AMOSTRAS/GTAGUA/amostras_amazonia_VeT');
+var pontos_0 = ee.FeatureCollection([]);
+
+var pontos_list = [
+  pontos_0,
+  pontos_1,
+  pontos_2,
+  pontos_3,
+  pontos_4,
+  pontos_5,
+  pontos_6
+  ];
+
+var pontos_biom = pontos_list[biom];
+
+var path = "projects/mapbiomas-workspace/AMOSTRAS/GTAGUA/OBJETOS/MERGED/AGUA_obj_merged_" + biom_4 + "_";
+
+var years = [
+1985, 1986, 1987, 1988, 1989,
+1990, 1991, 1992, 1993, 1994,
+1995, 1996, 1997, 1998, 1999,
+2000, 2001, 2002, 2003, 2004,
+2005, 2006, 2007, 2008, 2009,
+2010, 2011, 2012, 2013, 2014,
+2015, 2016, 2017, 2018, 2019, 
+//2020
+];
+
+var all_years_col = years.map(function (year) {
+  return ee.FeatureCollection(path + year).set("year", year);
+});
+
+print(pontos_biom.size());
+
+var pontos_attr = pontos_biom
+.filter(ee.Filter.eq("type", "training"))
+.map(function (p) {
+  
+  var year = ee.Number(ee.Feature(p).get("year"));
+  
+  var col_year = ee.FeatureCollection(ee.List(all_years_col).filter(ee.Filter.eq("year", year)).get(0));
+  
+  var segm = ee.Feature(
+    ee.Algorithms.If(
+      col_year.filterBounds(p.geometry().buffer(20)).size().gt(0),
+      col_year.filterBounds(p.geometry().buffer(20)).first(),
+      ee.Feature(ee.Geometry.Point(0,0), {"nuller": "nuller"})
+      )
+    );
+  
+  var p_attr = p.copyProperties(segm);
+  
+  return p_attr;
+});
+
+pontos_attr = pontos_attr.filter(ee.Filter.neq("nuller", "nuller"));
+print(pontos_attr.size());
+print(pontos_attr.limit(10));
+
+Export.table.toAsset(pontos_attr.sort("random"), "AGUA_training_" + biom_4,  "projects/mapbiomas-workspace/AMOSTRAS/GTAGUA/OBJETOS/TREINAMENTO/AGUA_training_" + biom_4)

@@ -1,0 +1,473 @@
+/**** Start of imports. If edited, may not auto-convert in the playground. ****/
+var srtm = ee.Image("USGS/SRTMGL1_003"),
+    bioms = ee.FeatureCollection("projects/mapbiomas-workspace/AUXILIAR/biomas-2019"),
+    mapb_anual = ee.Image("projects/mapbiomas-workspace/public/collection5/mapbiomas_collection50_integration_v1"),
+    col = ee.ImageCollection("projects/mapbiomas-workspace/TRANSVERSAIS/AGUA5-FT"),
+    l5_col = ee.ImageCollection("LANDSAT/LT05/C01/T1_SR"),
+    l7_col = ee.ImageCollection("LANDSAT/LE07/C01/T1_SR"),
+    l8_col = ee.ImageCollection("LANDSAT/LC08/C01/T1_SR");
+/***** End of imports. If edited, may not auto-convert in the playground. *****/
+
+l7_col = l7_col.filterDate('1995-01-01', '2012-12-31');
+
+var bandnamed = ['blue', 'green', 'red', 'nir', 'swir1', 'swir2'];
+var bands_l5 = ['B1', 'B2', 'B3', 'B4', 'B5', 'B7'];
+var bands_l7 = ['B1', 'B2', 'B3', 'B4', 'B5', 'B7'];
+var bands_l8 = ['B2', 'B3', 'B4', 'B5', 'B6', 'B7'];
+
+var rename_bands = function (imgCol, input) {
+  return imgCol.select(input, bandnamed);
+};
+
+var cloudScore = function (image) {
+
+    var rescale = function (obj) {
+    
+        var image = obj.image.subtract(obj.min).divide(ee.Number(obj.max).subtract(obj.min));
+    
+        return image;
+    };
+
+    var cloudThresh = 10;
+
+    // Compute several indicators of cloudiness and take the minimum of them.
+    var score = ee.Image(1.0);
+
+    // Clouds are reasonably bright in the blue band.
+    score = score.min(rescale({
+        'image': image.select(['blue']),
+        'min': 1000,
+        'max': 3000
+    }));
+
+    // Clouds are reasonably bright in all visible bands.
+    score = score.min(rescale({
+        'image': image.expression("b('red') + b('green') + b('blue')"),
+        'min': 2000,
+        'max': 8000
+    }));
+
+    // Clouds are reasonably bright in all infrared bands.
+    score = score.min(rescale({
+        'image': image.expression("b('nir') + b('swir1') + b('swir2')"),
+        'min': 3000,
+        'max': 8000
+    }));
+
+    // However, clouds are not snow.
+    var ndsi = image.normalizedDifference(['green', 'swir1']);
+
+    score = score.min(rescale({
+        'image': ndsi,
+        'min': 8000,
+        'max': 6000
+    })).multiply(100).byte();
+
+    var cond = score.lt(cloudThresh);
+    
+    // var kernel = ee.Kernel.euclidean(2000, 'meters');
+    
+    // var proximity = cond.distance(kernel, false);
+    
+    // cond = cond.remap([0,1], [1,0]).where(proximity.gt(0), 0);
+    
+    return image.updateMask(cond);
+};
+
+var endmembers = [
+    [119.0, 475.0, 169.0, 6250.0, 2399.0, 675.0], /*gv*/
+    [1514.0, 1597.0, 1421.0, 3053.0, 7707.0, 1975.0], /*npv*/
+    [1799.0, 2479.0, 3158.0, 5437.0, 7707.0, 6646.0], /*soil*/
+    [4031.0, 8714.0, 7900.0, 8989.0, 7002.0, 6607.0] /*cloud*/
+];
+
+var sma = function (image) {
+    
+    var bands = ['blue','green','red','nir','swir1','swir2'];
+    var outBandNames = ['gv', 'npv', 'soil', 'cloud'];
+    
+    var fractions = ee.Image(image)
+                        .select(bands)
+                        .unmix(endmembers); //, true, true
+
+    fractions = fractions.rename(outBandNames);
+    return image.addBands(fractions);
+};
+
+var l5_ready = rename_bands(l5_col, bands_l5).map(sma);
+var l7_ready = rename_bands(l7_col, bands_l7).map(sma);
+var l8_ready = rename_bands(l8_col, bands_l8).map(sma);
+
+var processed_col = l5_ready.merge(l7_ready).merge(l8_ready).filter(ee.Filter.lte('CLOUD_COVER', 70));
+
+var col_anual = col
+  .filter(ee.Filter.eq('version', '3'))
+  .filter(ee.Filter.eq('cadence', 'annual'));
+
+var col_mensal = col
+  .filter(ee.Filter.eq('version', '3'))
+  .filter(ee.Filter.eq('cadence', 'monthly'));
+
+var biom = bioms;
+
+var param = 0.35;
+var perc_limit = 15;
+var freq_limit = 2;
+
+var new_year_swsc_anual;
+var new_year_swsc_mensal;
+
+var year = 2019;
+var yearList = [
+    1985, 1986, 1987, 1988, 1989, 1990, 1991, 1992, 1993, 1994, 1995, 1996, 1997, 1998, 1999, 2000,
+    2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008, 2009, 2010, 2011, 2012, 2013, 2014, 2015, 2016, 
+    2017, 2018, 2019
+];
+
+var biom_names = ['AMAZONIA', 'CAATINGA', 'CERRADO', 'MATAATLANTICA', 'PAMPA', 'PANTANAL', 'ZONA COSTEIRA'];
+var biom_name = 'CAATINGA';
+
+var blues = [
+    'ffffff',
+    '00ffff',
+    '0000ff',
+    '000040'
+    ];
+var mapb_palette = [
+'ffffff',
+'129912',
+'1f4423',
+'006400',
+'00ff00',
+'687537',
+'76a5af',
+'29eee4',
+'77a605',
+'935132',
+'bbfcac',
+'45c2a5',
+'b8af4f',
+'f1c232',
+'ffffb2',
+'ffd966',
+'f6b26b',
+'f99f40',
+'e974ed',
+'d5a6bd',
+'c27ba0',
+'fff3bf',
+'ea9999',
+'dd7e6b',
+'aa0000',
+'ff99ff',
+'0000ff',
+'d5d5e5',
+'dd497f',
+'b2ae7c',
+'af2a2a',
+'8a2be2',
+'968c46',
+'0000ff',
+'4fd3ff',
+'645617',
+'f3b4f1',
+'02106f',
+'02106f',
+'c59ff4',
+'ba87f8',
+'e787f8',
+'cca0d4',
+'d082de',
+'cd49e4',
+'e04cfa'
+  ];
+var mapb_vis = {min:1, max:45, palette: mapb_palette};
+
+var grad = [
+'ffffcc',
+'ffeda0',
+'fed976',
+'feb24c',
+'fd8d3c',
+'fc4e2a',
+'e31a1c',
+'bd0026',
+'800026' 
+  ];
+
+var doSoilMask = function (year, biom, param, perc_limit, freq_limit) {
+  
+  var soil_masking = function (image) {
+    return image.addBands(image.select("soil").gt(10).where(image.select("soil").gt(param), 1).rename('soil_mask').selfMask());
+  };
+  
+  var start = ee.Date.fromYMD(year, 1, 1);
+  var end = start.advance(1, 'year');
+  
+  var soil_freq = processed_col.filterDate(start, end).filterBounds(biom).map(cloudScore).map(soil_masking).sum().select('soil_mask');
+  var imgs_freq = processed_col.filterDate(start, end).filterBounds(biom).map(cloudScore).map(function (i) {return i.select('red').gt(-1)}).sum();
+  
+  var soil_perc = soil_freq.divide(imgs_freq).unmask().multiply(100).round().selfMask();
+  var soil_perc_mask = soil_perc.gte(perc_limit).selfMask();
+  var soil_freq_mask = soil_freq.gte(freq_limit).selfMask();
+
+return soil_freq.addBands(soil_perc)
+  .addBands(soil_freq_mask).addBands(soil_perc_mask)
+  .rename(['soil_freq', 'soil_perc', 'soil_freq_mask', 'soil_perc_mask'])
+  .clip(biom);
+
+};
+
+var mosaicing = function (year, biom) {
+  var start = ee.Date.fromYMD(year, 1, 1);
+  var end = start.advance(1, 'year');
+  
+  return processed_col.filterDate(start, end).filterBounds(biom).map(cloudScore).reduce(ee.Reducer.percentile([25])).select(['red_p25', 'green_p25', 'blue_p25']);
+};
+
+
+// --- fc ---------------------------------------------------------------------------
+var cartas = ee.FeatureCollection('projects/mapbiomas-workspace/AUXILIAR/cartas');
+var cartasImg = ee.Image(0).mask(0).paint(biom, '000000', 2);
+
+// // --- Images --------------------------------------------------------------------
+var default_img = ee.Image().select();
+// --------------------------------------------------------------------------------
+
+// construct UI
+var beforeMap = ui.Map({
+    style: {
+        border: '2px solid black'
+    }
+});
+var afterMap = ui.Map({
+    style: {
+        stretch: 'both',
+        border: '2px solid black'
+    }
+});
+
+beforeMap.addLayer(default_img, {}, 'mosaic', false);
+beforeMap.addLayer(default_img, {}, 'classes year mapb', false, 0.5);
+beforeMap.addLayer(default_img, {}, 'water monthly', false);
+beforeMap.addLayer(default_img, {}, 'Soil Perc', false);
+beforeMap.addLayer(default_img, {}, 'Soil Perc Mask', false);
+beforeMap.addLayer(cartasImg, {
+    palette: '000000'
+}, 'bioma');
+
+var linkedBeforeMap = new ui.Map({
+    style: {
+        border: '2px solid black'
+    }
+});
+linkedBeforeMap.addLayer(default_img, {}, 'mosaic', false);
+linkedBeforeMap.addLayer(default_img, {}, 'classes year mapb', false, 0.5);
+linkedBeforeMap.addLayer(default_img, {}, 'water annually', false);
+linkedBeforeMap.addLayer(default_img, {}, 'Soil Freq', false);
+linkedBeforeMap.addLayer(default_img, {}, 'Soil Freq Mask', false);
+linkedBeforeMap.addLayer(cartasImg, {
+    palette: '000000'
+}, 'bioma');
+
+var linkerBefore = ui.Map.Linker([beforeMap, linkedBeforeMap]);
+var splitPanelBefore = new ui.SplitPanel({
+    firstPanel: linkerBefore.get(0),
+    secondPanel: linkerBefore.get(1),
+    orientation: 'horizontal',
+    wipe: true,
+    style: {
+        stretch: 'both'
+    }
+});
+
+beforeMap.setCenter(-58.44, -2.76, 4);
+linkedBeforeMap.setCenter(-58.44, -2.76, 4);
+
+// -----------------------------------------------------------------------------
+
+var aktualisier = function (/*list, slopes_threshold,*/ year, biom_name, param, perc_limit, freq_limit) {
+  
+  var cd_biom = ee.Number(biom_names.indexOf(biom_name)).add(1);
+  biom = bioms.filter(ee.Filter.eq('CD_Bioma', cd_biom));
+  
+  var year_mapb = mapb_anual.select(ee.Number(year).subtract(1985));
+  var year_swsc_anual = col_anual.filter(ee.Filter.eq('year', ee.Number(year))).filter(ee.Filter.eq('biome', biom_name)).first();
+  var year_swsc_mensal = col_mensal.filter(ee.Filter.eq('year', ee.Number(year))).filter(ee.Filter.eq('biome', biom_name)).first();
+  
+  var new_soil_img_a = doSoilMask(year, biom, param, perc_limit, freq_limit).select('soil_perc');
+  var new_soil_img_b = doSoilMask(year, biom, param, perc_limit, freq_limit).select('soil_freq');
+  var new_soil_mask_a = doSoilMask(year, biom, param, perc_limit, freq_limit).select('soil_perc_mask');
+  var new_soil_mask_b = doSoilMask(year, biom, param, perc_limit, freq_limit).select('soil_freq_mask');
+  
+  beforeMap.remove(beforeMap.layers().get(4));
+  beforeMap.remove(beforeMap.layers().get(3));
+  beforeMap.remove(beforeMap.layers().get(2));
+  beforeMap.remove(beforeMap.layers().get(1));
+  beforeMap.remove(beforeMap.layers().get(0));
+  
+  linkedBeforeMap.remove(linkedBeforeMap.layers().get(4));
+  linkedBeforeMap.remove(linkedBeforeMap.layers().get(3));
+  linkedBeforeMap.remove(linkedBeforeMap.layers().get(2));
+  linkedBeforeMap.remove(linkedBeforeMap.layers().get(1));
+  linkedBeforeMap.remove(linkedBeforeMap.layers().get(0));
+  
+  var new_mapb_layer_a = ui.Map.Layer(year_mapb, mapb_vis, 'classes year mapb', false, 0.5);
+  var new_mapb_layer_b = ui.Map.Layer(year_mapb, mapb_vis, 'classes year mapb', false, 0.5);
+  
+  var new_swsc_layer = ui.Map.Layer(year_swsc_anual, {palette: '0000ff'}, 'water anual', true);
+  var new_rf_layer = ui.Map.Layer(year_swsc_mensal.reduce(ee.Reducer.sum()), {min:1, max:12, palette: blues}, 'water mensal', true);
+  
+  var new_soil_layer_a = ui.Map.Layer(new_soil_img_a, {min: 0, max: 100, palette: grad}, 'soil perc.', true);
+  var new_soil_mask_layer_a = ui.Map.Layer(new_soil_mask_a, {palette: 'red'}, 'soil mask perc.', false);
+  
+  var new_soil_layer_b = ui.Map.Layer(new_soil_img_b, {min: 0, max: 10, palette: grad}, 'soil freq.', true);
+  var new_soil_mask_layer_b = ui.Map.Layer(new_soil_mask_b, {palette: 'red'}, 'soil mask freq.', false);
+  
+  var new_mosaic_a = ui.Map.Layer(mosaicing(year, biom), {min:0, max:1500}, 'mosaic', false);
+  var new_mosaic_b = ui.Map.Layer(mosaicing(year, biom), {min:0, max:1500}, 'mosaic', false);
+  
+  linkedBeforeMap.layers().insert(0, new_mosaic_b);
+  linkedBeforeMap.layers().insert(1, new_mapb_layer_b);
+  linkedBeforeMap.layers().insert(2, new_swsc_layer);
+  linkedBeforeMap.layers().insert(3, new_soil_layer_b);
+  linkedBeforeMap.layers().insert(4, new_soil_mask_layer_b);
+  
+  beforeMap.layers().insert(0, new_mosaic_a);
+  beforeMap.layers().insert(1, new_mapb_layer_a);
+  beforeMap.layers().insert(2, new_rf_layer);
+  beforeMap.layers().insert(3, new_soil_layer_a);
+  beforeMap.layers().insert(4, new_soil_mask_layer_a);
+};
+
+// --- chart -------------------------------------------------------------------
+var collection = yearList.map(function (year_number) {
+    return ee.Feature(null, {
+        'year': String(year_number),
+        'class_band': 'classification_' + year_number,
+        'water_band': 'water_' + year_number,
+        'system:yValue': 0
+    });
+});
+
+var chart = ui.Chart.feature.byFeature(collection, 'year', 'system:yValue')
+    .setChartType('LineChart')
+    .setOptions({
+        legend: 'none',
+        lineWidth: 1,
+        pointSize: 5,
+        height: 100,
+        vAxis: {
+            gridlines: {
+                count: 0
+            }
+        },
+        'chartArea': {
+            left: 30,
+            top: 10,
+            right: 30,
+            width: '100%',
+            height: '80%'
+        },
+        hAxis: {
+            textPosition: 'in',
+            showTextEvery: 1,
+            interpolateNulls: true,
+            slantedTextAngle: 90,
+            slantedText: true,
+            textStyle: {
+                color: '#000000',
+                fontSize: 12,
+                fontName: 'Arial',
+                bold: false,
+                italic: false
+            }
+        },
+        tooltip :{
+          trigger: 'none',
+        },
+        colors: ['#FF0000'],
+        crosshair: {
+            trigger: 'both',
+            orientation: 'vertical',
+            focused: {
+                color: '#0000ff'
+            }
+        }
+    });
+
+chart.style().set({
+    position: 'bottom-center',
+    width: '100%',
+    height: '150px',
+    margin: '0px',
+    padding: '0px',
+});
+
+
+chart.onClick(function (xValue, yValue, seriesName) {
+    if (!xValue) return;
+    var feature = ee.Feature(
+        ee.FeatureCollection(collection)
+        .filter(ee.Filter.eq('year', xValue))
+        .first()
+    );
+   year = ee.Number.parse(feature.get('year'), 10);
+    var class_band = ee.String(feature.get('class_band'));
+    var water_band = ee.String(feature.get('water_band'));
+    
+    aktualisier(/*overlapList, slopes_threshold,*/ year, biom_name, param, perc_limit, freq_limit);
+    
+});
+
+var biom_selector = ui.Select({
+    items: biom_names,
+    placeholder: 'Bioma',
+    onChange: function (input) {
+        var cd_biom = biom_names.indexOf(input) + 1;
+        biom_name = input;
+        biom = bioms.filter(ee.Filter.eq('CD_Bioma', cd_biom));
+        aktualisier(/*overlapList, slopes_threshold,*/ year, biom_name, param, perc_limit, freq_limit);
+    },
+    style: {
+      width: '250px'
+    }
+});
+
+
+// --------------------------------------------------------------------------------- 
+
+var slider_param = ui.Slider(0, 1, 0.35, 0.05, function (value) {param = value}, 'horizontal', false, {width: '500px'});
+var slider_freq = ui.Slider(1, 10, 2, 1, function (value) {freq_limit = value}, 'horizontal', false, {width: '500px'});
+var slider_perc = ui.Slider(1, 100, 15, 1, function (value) {perc_limit = value}, 'horizontal', false, {width: '500px'});
+var go_button = ui.Button({
+  label:'Visualizar!', 
+  onClick: function () {
+    aktualisier(/*overlapList, slopes_threshold,*/ year, biom_name, param, perc_limit, freq_limit);
+  }
+});
+
+var slider_param_panel = ui.Panel([ui.Label('Fração Soil >'), slider_param], ui.Panel.Layout.Flow('horizontal', true));
+var slider_freq_panel = ui.Panel([ui.Label('Freq.Anual >'), slider_freq], ui.Panel.Layout.Flow('horizontal', true));
+var slider_perc_panel = ui.Panel([ui.Label('Perc.Anual [%] >'), slider_perc], ui.Panel.Layout.Flow('horizontal', true));
+
+var slider_panel = ui.Panel([slider_param_panel, slider_freq_panel, slider_perc_panel, go_button], ui.Panel.Layout.Flow('vertical', true));
+
+var index;
+
+var optPanel = ui.Panel([biom_selector, slider_panel], ui.Panel.Layout.Flow('horizontal', true));
+
+var panel0 = ui.Panel(
+    [optPanel, splitPanelBefore],
+    ui.Panel.Layout.Flow('vertical', true), {stretch: 'both'}
+);
+
+var panel = ui.Panel([
+  panel0, 
+  chart
+  ],
+    ui.Panel.Layout.Flow('vertical'), {
+        stretch: 'both'
+    });
+ui.root.widgets().reset([panel]);
+ui.root.setLayout(ui.Panel.Layout.Flow('vertical'));

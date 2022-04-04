@@ -1,0 +1,69 @@
+var getArea = function (img, pixelValor, geom) {
+  var mask = img.eq(pixelValor).selfMask();
+  var dict = ee.Image.pixelArea().divide(1000000)
+    .updateMask(mask)
+    .reduceRegion({ 
+      reducer: ee.Reducer.sum(), 
+      geometry: geom, 
+      scale: 30, 
+      bestEffort: true, 
+      maxPixels: 1e13
+    });
+  return ee.Number(dict.get("area"));
+};
+
+for (var CD_biom=1; CD_biom<=6; CD_biom++) {
+
+    var grids = ee.FeatureCollection("users/frederickirchhoff/brazil_big_grids");
+    var bioms = ee.FeatureCollection('projects/mapbiomas-workspace/AUXILIAR/biomas-2019');
+    var biom_geo = bioms.filter(ee.Filter.eq('CD_Bioma', ee.Number (CD_biom)));
+  
+   var estratos = ee.Image ('projects/mapbiomas-workspace/AMOSTRAS/GTAGUA/ACURACIA/V11/estratos').clip(biom_geo);
+
+    var gridsCalc = grids.map(function (grid) {
+      
+    var class_1 = getArea (estratos, 1, grid.geometry());
+    var class_2 = getArea (estratos, 2, grid.geometry());
+    var class_3 = getArea (estratos, 3, grid.geometry());
+    var class_4 = getArea (estratos, 4, grid.geometry());
+    var class_5 = getArea (estratos, 5, grid.geometry());
+    var class_6 = getArea (estratos, 6, grid.geometry());
+    var class_7 = getArea (estratos, 7, grid.geometry());
+     
+      var gridCalc = grid
+        .set("class_1", class_1)
+        .set('class_2', class_2)
+        .set('class_3', class_3)
+        .set('class_4', class_4)
+        .set('class_5', class_5)
+        .set('class_6', class_6)
+        .set('class_7', class_7);
+      
+      return gridCalc;
+    });
+
+    var class_1 = gridsCalc.reduceToImage(["class_1"], ee.Reducer.max()).rename("permanente");
+    var class_2 = gridsCalc.reduceToImage(["class_2"], ee.Reducer.max()).rename("intermitente");
+    var class_3 = gridsCalc.reduceToImage(["class_3"], ee.Reducer.max()).rename("infrequente");
+    var class_4 = gridsCalc.reduceToImage(["class_4"], ee.Reducer.max()).rename("solo");
+    var class_5 = gridsCalc.reduceToImage(["class_5"], ee.Reducer.max()).rename("dist_250");
+    var class_6 = gridsCalc.reduceToImage(["class_6"], ee.Reducer.max()).rename("dist_500");
+    var class_7 = gridsCalc.reduceToImage(["class_7"], ee.Reducer.max()).rename("dist_5000");
+   
+   var areaImage = class_1.addBands(class_2).addBands(class_3)
+      .addBands(class_4).addBands(class_5)
+      .addBands(class_6).addBands(class_7)
+      .set("CD_Bioma", CD_biom);
+      
+      Export.image.toAsset({
+      image: areaImage, 
+      description: "areaImage" + "_" + CD_biom, 
+      assetId: "projects/mapbiomas-workspace/AMOSTRAS/GTAGUA/ACURACIA/V11/controlImage/areaImage" + "_" + CD_biom, 
+      region: biom_geo.first().geometry().bounds(), 
+      scale: 5000, 
+      maxPixels: 1e10
+    });   
+    
+  }
+   
+  

@@ -1,0 +1,721 @@
+/**** Start of imports. If edited, may not auto-convert in the playground. ****/
+var srtm = ee.Image("USGS/SRTMGL1_003"),
+    bioms = ee.FeatureCollection("projects/mapbiomas-workspace/AUXILIAR/biomas-2019"),
+    col_mensal = ee.ImageCollection("users/wwfrioparaguai/MapBiomasAGUA/iteration_2"),
+    mapb_anual = ee.Image("projects/mapbiomas-workspace/public/collection5/mapbiomas_collection50_integration_v1"),
+    embargo_manual = /* color: #d63000 */ee.Geometry.Polygon(
+        [[[-50.26308319706576, -2.2470803216455826],
+          [-50.24711868900912, -2.2855023933515235],
+          [-50.2241160644974, -2.2770976524338433],
+          [-50.24454376835482, -2.2436497301085296]]]);
+/***** End of imports. If edited, may not auto-convert in the playground. *****/
+var fill = /* color: #d63000 */ee.Geometry.Polygon(
+    [[[-51.25430707558956, -30.501518378090406],
+      [-51.26803998574581, -30.672938007684703],
+      [-51.25842694863643, -30.7933409808653],
+      [-51.35667761432488, -30.887530560604482],
+      [-51.448688112371755, -30.929948107636733],
+      [-51.462421022528005, -31.037086346417563],
+      [-51.410235963934255, -31.12059410422883],
+      [-51.586017213934255, -31.145279518338054],
+      [-51.624469362371755, -31.227517809021606],
+      [-51.594256960028005, -31.28034753076809],
+      [-51.71922644244988, -31.285042075032226],
+      [-51.84556921588738, -31.33666663198917],
+      [-51.926593385809255, -31.364813552028796],
+      [-52.000751100653005, -31.485515019074068],
+      [-52.006274742923864, -31.630558305248403],
+      [-52.01036413776238, -31.754480660411105],
+      [-51.981525026434255, -31.761486742591448],
+      [-51.72675760826254, -31.758765238653645],
+      [-51.64781530963738, -31.737142637589518],
+      [-51.432208620184255, -31.421262221401765],
+      [-51.363544069403005, -31.517309421439023],
+      [-51.204242311590505, -31.364993771794868],
+      [-51.19737585651238, -31.059621483709577],
+      [-50.987905433919074, -31.00199328909663],
+      [-50.990008913153005, -30.97959242801393],
+      [-50.976276002996755, -30.884176051805245],
+      [-50.93370398151238, -30.898317818364287],
+      [-50.880145631903005, -30.855886255222472],
+      [-50.75242956744988, -30.785125252770783],
+      [-50.718097292059255, -30.61863193077283],
+      [-50.737323366278005, -30.45895463983403],
+      [-51.10399206744988, -30.475525962477896],
+      [-51.157550417059255, -30.505110595550967],
+      [-51.179523073309255, -30.477893064104997]]]);
+
+var hand30_1000 =  ee.Image("users/gena/GlobalHAND/30m/hand-1000");
+
+var fill_img = ee.Image(1).clip(fill);
+
+var col_anual = ee.ImageCollection("projects/mapbiomas-workspace/TRANSVERSAIS/AGUA5-FT").filter(ee.Filter.eq('version', '1'));
+
+col_mensal = col_mensal.map(function (i) {
+    var ano = ee.Number.parse(ee.String(i.get('system:index')).slice(12));
+    return i.set('year', ano);
+  });
+
+
+var biom = bioms;
+
+var slopes = ee.Terrain.slope(srtm);
+var slopes_threshold = 15;
+
+var new_year_swsc_anual;
+var new_year_swsc_mensal;
+
+var year = 2019;
+var yearList = [
+    1985, 1986, 1987, 1988, 1989, 1990, 1991, 1992, 1993, 1994, 1995, 1996, 1997, 1998, 1999, 2000,
+    2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008, 2009, 2010, 2011, 2012, 2013, 2014, 2015, 2016, 
+    2017, 2018, 2019
+];
+
+var biom_names = ['AMAZONIA', 'CAATINGA', 'CERRADO', 'MATA ATLANTICA', 'PAMPA', 'PANTANAL', 'ZONA COSTEIRA'];
+var biom_name;
+
+var blues = [
+    'ffffff',
+    '00ffff',
+    '0000ff',
+    '000040'
+    ];
+var mapb_palette = [
+'ffffff',
+'129912',
+'1f4423',
+'006400',
+'00ff00',
+'687537',
+'76a5af',
+'29eee4',
+'77a605',
+'935132',
+'bbfcac',
+'45c2a5',
+'b8af4f',
+'f1c232',
+'ffffb2',
+'ffd966',
+'f6b26b',
+'f99f40',
+'e974ed',
+'d5a6bd',
+'c27ba0',
+'fff3bf',
+'ea9999',
+'dd7e6b',
+'aa0000',
+'ff99ff',
+'0000ff',
+'d5d5e5',
+'dd497f',
+'b2ae7c',
+'af2a2a',
+'8a2be2',
+'968c46',
+'0000ff',
+'4fd3ff',
+'645617',
+'f3b4f1',
+'02106f',
+'02106f',
+'c59ff4',
+'ba87f8',
+'e787f8',
+'cca0d4',
+'d082de',
+'cd49e4',
+'e04cfa'
+  ];
+var mapb_vis = {min:1, max:45, palette: mapb_palette};
+
+// --- fc ---------------------------------------------------------------------------
+var cartas = ee.FeatureCollection('projects/mapbiomas-workspace/AUXILIAR/cartas');
+var cartasImg = ee.Image(0).mask(0).paint(biom, '000000', 2);
+
+// // --- Images --------------------------------------------------------------------
+var default_img = ee.Image().select();
+// --------------------------------------------------------------------------------
+
+// construct UI
+var beforeMap = ui.Map({
+    style: {
+        border: '2px solid black'
+    }
+});
+var afterMap = ui.Map({
+    style: {
+        stretch: 'both',
+        border: '2px solid black'
+    }
+});
+
+beforeMap.drawingTools().addLayer([embargo_manual], 'embargo_manual', 'ff0000', false, true);
+
+beforeMap.addLayer(default_img, {}, 'classes year mapb', false, 0.5);
+beforeMap.addLayer(default_img, {}, 'water monthly', false);
+beforeMap.addLayer(default_img, {}, 'HAND', false);
+beforeMap.addLayer(cartasImg, {
+    palette: '000000'
+}, 'bioma');
+
+var linkedBeforeMap = new ui.Map({
+    style: {
+        border: '2px solid black'
+    }
+});
+linkedBeforeMap.addLayer(default_img, {}, 'classes year mapb', false, 0.5);
+linkedBeforeMap.addLayer(default_img, {}, 'water annually', false);
+linkedBeforeMap.addLayer(default_img, {}, 'HAND', false);
+linkedBeforeMap.addLayer(cartasImg, {
+    palette: '000000'
+}, 'bioma');
+
+var linkerBefore = ui.Map.Linker([beforeMap, linkedBeforeMap]);
+var splitPanelBefore = new ui.SplitPanel({
+    firstPanel: linkerBefore.get(0),
+    secondPanel: linkerBefore.get(1),
+    orientation: 'horizontal',
+    wipe: true,
+    style: {
+        stretch: 'both'
+    }
+});
+
+beforeMap.setCenter(-58.44, -2.76, 4);
+linkedBeforeMap.setCenter(-58.44, -2.76, 4);
+
+// -----------------------------------------------------------------------------
+var overlapLists = [
+    [],
+    [41,39,36,32,31,30,29,25,24,23,20,19,18],
+    [41,39,36,32,31,30,29,25,24,23,20,19,18,9],
+    [41,39,36,32,31,30,29,25,24,23,20,19,18,9,15],
+    [41,39,36,32,31,30,29,25,24,23,20,19,18,9],
+    [41,39,36,32,31,30,29,25,24,23,20,19,18,9],
+    [41,39,36,32,31,30,29,25,24,23,20,19,18,9],
+    [41,39,36,32,31,30,29,25,24,23,20,19,18,5],
+];
+var overlapList = [];
+var classesList = [
+[1, '129912', false],
+[2, '1f4423', false],
+[3, '006400', false],
+[4, '00ff00', false],
+[5, '687537', false],
+[6, '76a5af', false],
+[7, '29eee4', false],
+[8, '77a605', false],
+[9, '935132', false],
+[10, 'bbfcac', false],
+[11, '45c2a5', false],
+[12, 'b8af4f', false],
+[13, 'f1c232', false],
+[14, 'ffffb2', false],
+[15, 'ffd966', false],
+[16, 'f6b26b', false],
+[17, 'f99f40', false],
+[18, 'e974ed', false],
+[19, 'd5a6bd', false],
+[20, 'c27ba0', false],
+[21, 'fff3bf', false],
+[22, 'ea9999', false],
+[23, 'dd7e6b', false],
+[24, 'aa0000', false],
+[25, 'ff99ff', false],
+[26, '0000ff', false],
+[27, 'd5d5e5', false],
+[28, 'dd497f', false],
+[29, 'b2ae7c', false],
+[30, 'af2a2a', false],
+[31, '8a2be2', false],
+[32, '968c46', false],
+[33, '0000ff', false],
+[34, '4fd3ff', false],
+[35, '645617', false],
+[36, 'f3b4f1', false],
+[37, '02106f', false],
+[38, '02106f', false],
+[39, 'c59ff4', false],
+[40, 'ba87f8', false],
+[41, 'e787f8', false],
+[42, 'cca0d4', false],
+[43, 'd082de', false],
+[44, 'cd49e4', false],
+[45, 'e04cfa', false]
+  ];
+
+function radians(img) { return img.toFloat().multiply(3.1415927).divide(180); }
+function hillshade(az, ze, slope, aspect) {
+  var azimuth = radians(ee.Image(az));
+  var zenith = radians(ee.Image(ze));
+  return azimuth.subtract(aspect).cos().multiply(slope.sin()).multiply(zenith.sin())
+      .add(zenith.cos().multiply(slope.cos()));
+}
+function hillshadeit(image, elevation, weight, height_multiplier, azimuth, zenith) {
+  var hsv  = image.unitScale(0, 255).rgbToHsv();
+
+  var terrain = ee.call('Terrain', elevation.multiply(height_multiplier));
+  var slope = radians(terrain.select(['slope']));
+
+  var aspect = radians(terrain.select(['aspect'])).resample('bicubic');
+  var hs = hillshade(azimuth, zenith, slope, aspect).resample('bicubic');
+
+  var intensity = hs.multiply(weight).multiply(hsv.select('value'));
+  var huesat = hsv.select('hue', 'saturation');
+
+  return ee.Image.cat(huesat, intensity).hsvToRgb();
+}
+
+
+var doHandClasses = function (dist) {
+
+  var gaussianKernel = ee.Kernel.gaussian(3, 2, 'pixels', true, 2);
+  var terrain = ee.call('Terrain', srtm.convolve(gaussianKernel));
+  
+  var slope = radians(terrain.select(['slope']))
+    .lt(0.076);
+
+  slope = slope
+    .focal_max({radius: 50, units: 'meters'})
+    .focal_min({radius: 50, units: 'meters'});
+
+  var hand_class = hand30_1000.addBands(slope).expression("(b(0) <= 5.3) ? 0 : (b(0) <= "+ dist +" && b(0) > 5.3 ) ? 1 : (b(0) > "+ dist +" && b(1) == 0 ) ? 2   : (b(0) > "+ dist +" && b(1) == 1 ) ? 3 : 0" );
+
+  return hand_class;
+};
+var showOffHand = function (dist) {
+
+  var gaussianKernel = ee.Kernel.gaussian(3, 2, 'pixels', true, 2);
+  var terrain = ee.call('Terrain', srtm.convolve(gaussianKernel));
+  
+  var slope = radians(terrain.select(['slope']))
+    .lt(0.076);
+
+  slope = slope
+    .focal_max({radius: 50, units: 'meters'})
+    //.focal_mode({radius: 55, units: 'meters', iterations:5})
+    .focal_min({radius: 50, units: 'meters'})
+
+  var hand_class = hand30_1000.addBands(slope).expression("(b(0) <= 5.3) ? 0 : (b(0) <= "+ dist +" && b(0) > 5.3 ) ? 1 : (b(0) > "+ dist +" && b(1) == 0 ) ? 2   : (b(0) > "+ dist +" && b(1) == 1 ) ? 3 : 0" );
+  
+  var style_hand_classes = "<RasterSymbolizer>  <ColorMap  type=\"intervals\" extended=\"false\" >      <ColorMapEntry color=\"#000055\" quantity=\"0\" label=\"Waterlogged\"/>      <ColorMapEntry color=\"#00ff00\" quantity=\"1\" label=\"Ecotone\"/>      <ColorMapEntry color=\"#ffff00\" quantity=\"2\" label=\"Slope\" />      <ColorMapEntry color=\"#ff0000\" quantity=\"3\" label=\"Plateau\" />    </ColorMap>  </RasterSymbolizer>";
+  
+  var azimuth = 90;
+  var zenith = 30;
+
+  //var hand_class_vis = hand_class.visualize({palette: colors_hand_classes})
+  var hand_class_vis = hand_class
+    //.focal_mode({radius:30, units:'meters', iterations:5})
+    //.focal_mode({radius:0.8, iterations:3})
+    //.focal_max({radius: 30, units: 'meters'})
+    //.focal_min({radius: 30, units: 'meters'})
+    .sldStyle(style_hand_classes);
+
+  return hillshadeit(hand_class_vis, srtm, 1.1, 2, azimuth, zenith);
+};
+
+var aktualisier = function (list, slopes_threshold, year, bioma) {
+    
+    var year_mapb = mapb_anual.select(ee.Number(year).subtract(1985));
+    var year_swsc_anual = col_anual.filter(ee.Filter.eq('year', ee.Number(year))).first();
+    var year_swsc_mensal = col_mensal.filter(ee.Filter.eq('year', ee.Number(year))).first()
+        .unmask()
+        .where(fill_img.eq(1), 1);
+
+    beforeMap.remove(beforeMap.layers().get(2));
+    beforeMap.remove(beforeMap.layers().get(1));
+    beforeMap.remove(beforeMap.layers().get(0));
+    
+    linkedBeforeMap.remove(linkedBeforeMap.layers().get(2));
+    linkedBeforeMap.remove(linkedBeforeMap.layers().get(1));
+    linkedBeforeMap.remove(linkedBeforeMap.layers().get(0));
+
+    var new_mapb_layer_a = ui.Map.Layer(year_mapb, mapb_vis, 'classes year mapb', true, 0.5);
+    var new_mapb_layer_b = ui.Map.Layer(year_mapb, mapb_vis, 'classes year mapb', true, 0.5);
+    
+    new_year_swsc_anual = year_swsc_anual
+        .where(year_mapb.eq(list).reduce(ee.Reducer.max()).eq(1), 0)
+        .where(doHandClasses(slopes_threshold).gt(1), 0)
+        .where(ee.Image(1).clip(beforeMap.drawingTools().layers().get(0).getEeObject()).eq(1), 0)
+        .selfMask()
+        .rename('classification')
+        .clip(bioma)
+        .byte();
+    
+    new_year_swsc_mensal = year_swsc_mensal
+        .where(year_mapb.eq(list).reduce(ee.Reducer.max()).eq(1), 0)
+        .where(doHandClasses(slopes_threshold).gt(1), 0)
+        .where(ee.Image(1).clip(beforeMap.drawingTools().layers().get(0).getEeObject()).eq(1), 0)
+        .selfMask()
+        .rename([
+            'classification_1',
+            'classification_2',
+            'classification_3',
+            'classification_4',
+            'classification_5',
+            'classification_6',
+            'classification_7',
+            'classification_8',
+            'classification_9',
+            'classification_10',
+            'classification_11',
+            'classification_12'
+            ])
+        .clip(bioma)
+        .byte();
+    
+    var new_hand = showOffHand(slopes_threshold);
+    
+    var new_swsc_layer = ui.Map.Layer(new_year_swsc_anual, {palette: '0000ff'}, 'water anual', true);
+    var new_rf_layer = ui.Map.Layer(new_year_swsc_mensal.reduce(ee.Reducer.sum()), {min:1, max:12, palette: blues}, 'water mensal', true);
+    var new_hand_layer_a = ui.Map.Layer(new_hand, {}, 'HAND', false);
+    var new_hand_layer_b = ui.Map.Layer(new_hand, {}, 'HAND', false);
+    
+    
+    linkedBeforeMap.layers().insert(0, new_mapb_layer_b);
+    linkedBeforeMap.layers().insert(1, new_swsc_layer);
+    linkedBeforeMap.layers().insert(2, new_hand_layer_b);
+    
+    beforeMap.layers().insert(0, new_mapb_layer_a);
+    beforeMap.layers().insert(1, new_rf_layer);
+    beforeMap.layers().insert(2, new_hand_layer_a);
+  
+};
+
+var aktualisier_image_anual = function (list, slopes_threshold, year, bioma) {
+  
+    var year_mapb = mapb_anual.select(ee.Number(year).subtract(1985));
+    var year_swsc_anual = col_anual.filter(ee.Filter.eq('year', ee.Number(year))).first();
+    
+    var new_year_swsc_anual = year_swsc_anual
+        .where(year_mapb.eq(list).reduce(ee.Reducer.max()).eq(1), 0)
+        .where(doHandClasses(slopes_threshold).gt(1), 0)
+        .where(ee.Image(1).clip(beforeMap.drawingTools().layers().get(0).getEeObject()).eq(1), 0)
+        .selfMask()
+        .rename('classification')
+        .clip(bioma)
+        .byte();
+    
+    return new_year_swsc_anual;
+};
+
+var aktualisier_image_mensal = function (list, slopes_threshold, year, bioma) {
+  
+    var year_mapb = mapb_anual.select(ee.Number(year).subtract(1985));
+    var year_swsc_mensal = col_mensal.filter(ee.Filter.eq('year', ee.Number(year))).first()
+        .unmask()
+        .where(fill_img.eq(1), 1);
+    
+    var new_year_swsc_mensal = year_swsc_mensal
+        .where(year_mapb.eq(list).reduce(ee.Reducer.max()).eq(1), 0)
+        .where(planforms.gt(1), 0)
+        .where(ee.Image(1).clip(beforeMap.drawingTools().layers().get(0).getEeObject()).eq(1), 0)
+        .selfMask()
+        .rename([
+            'classification_1',
+            'classification_2',
+            'classification_3',
+            'classification_4',
+            'classification_5',
+            'classification_6',
+            'classification_7',
+            'classification_8',
+            'classification_9',
+            'classification_10',
+            'classification_11',
+            'classification_12'
+            ])
+        .clip(bioma)
+        .byte();
+
+    return new_year_swsc_mensal;
+  
+};
+
+var classesPanels = classesList.map(function (sublist) {
+  
+    var boolean = sublist[2];
+    var color = sublist[1];
+    var label = sublist[0];
+
+    var class_checkbox = ui.Checkbox({
+        label: label, 
+        value: boolean, 
+        onChange: function (state) {
+        
+        if (state) {
+            overlapList = include(overlapList, label);
+        } else {
+            overlapList = exclude(overlapList, label);
+        }
+        
+        print(overlapList);
+        
+        aktualisier(overlapList, slopes_threshold, year, biom);
+        
+        }, 
+        style: {
+        color: color
+        }
+    });
+    
+    return class_checkbox;
+});
+
+var checkboxes = ui.Panel(classesPanels, ui.Panel.Layout.Flow('horizontal'), {
+        stretch: 'both',
+        height: '50px'
+    });
+
+// --- chart -------------------------------------------------------------------
+var collection = yearList.map(function (year_number) {
+    return ee.Feature(null, {
+        'year': String(year_number),
+        'class_band': 'classification_' + year_number,
+        'water_band': 'water_' + year_number,
+        'system:yValue': 0
+    });
+});
+// print('collection', collection);
+
+var chart = ui.Chart.feature.byFeature(collection, 'year', 'system:yValue')
+    .setChartType('LineChart')
+    .setOptions({
+        legend: 'none',
+        lineWidth: 1,
+        pointSize: 5,
+        height: 100,
+        vAxis: {
+            gridlines: {
+                count: 0
+            }
+        },
+        'chartArea': {
+            left: 30,
+            top: 10,
+            right: 30,
+            width: '100%',
+            height: '80%'
+        },
+        hAxis: {
+            textPosition: 'in',
+            showTextEvery: 1,
+            interpolateNulls: true,
+            slantedTextAngle: 90,
+            slantedText: true,
+            textStyle: {
+                color: '#000000',
+                fontSize: 12,
+                fontName: 'Arial',
+                bold: false,
+                italic: false
+            }
+        },
+        tooltip :{
+          trigger: 'none',
+        },
+        colors: ['#FF0000'],
+        crosshair: {
+            trigger: 'both',
+            orientation: 'vertical',
+            focused: {
+                color: '#0000ff'
+            }
+        }
+    });
+
+chart.style().set({
+    position: 'bottom-center',
+    width: '100%',
+    height: '150px',
+    margin: '0px',
+    padding: '0px',
+});
+
+
+chart.onClick(function (xValue, yValue, seriesName) {
+    if (!xValue) return;
+    var feature = ee.Feature(
+        ee.FeatureCollection(collection)
+        .filter(ee.Filter.eq('year', xValue))
+        .first()
+    );
+   year = ee.Number.parse(feature.get('year'), 10);
+    var class_band = ee.String(feature.get('class_band'));
+    var water_band = ee.String(feature.get('water_band'));
+    
+    aktualisier(overlapList, slopes_threshold, year, biom);
+    
+});
+
+function contains(a, obj) {
+    for (var i = 0; i < a.length; i++) {
+        if (a[i] === obj) {
+            return true;
+        }
+    }
+    return false;
+}
+
+function exclude(a, obj) {
+  var new_list = a.map(function (e) {
+    var nr;
+    if (e === obj) {
+      nr = null;
+    } else {
+      nr = e;
+    }
+    return nr;
+  });
+  return new_list.filter(function (value) {return value !== null});
+}
+
+function include(a, obj) {
+  var new_list = a.concat([obj]);
+  return new_list;
+}
+
+var biom_selector = ui.Select({
+    items: biom_names,
+    placeholder: 'Bioma',
+    onChange: function (input) {
+        var cd_biom = biom_names.indexOf(input) + 1;
+        biom_name = input;
+        biom = bioms.filter(ee.Filter.eq('CD_Bioma', cd_biom));
+        overlapList = overlapLists[cd_biom];
+        var classesList_new = classesList.map(function (sub_list) {
+          var new_sub_list = [sub_list[0], sub_list[1], contains(overlapList, sub_list[0])];
+          return new_sub_list;
+        });
+        var classesPanels_new = classesList_new.map(function (sublist) {
+          
+            var boolean = sublist[2];
+            var color = sublist[1];
+            var label = sublist[0];
+        
+            var class_checkbox = ui.Checkbox({
+                label: label, 
+                value: boolean, 
+                onChange: function (state) {
+                
+                if (state) {
+                    overlapList = include(overlapList, label);
+                } else {
+                    overlapList = exclude(overlapList, label);
+                }
+                
+                print(overlapList);
+                
+                aktualisier(overlapList, slopes_threshold, year, biom);
+                
+                }, 
+                style: {
+                color: color
+                }
+            });
+            
+            return class_checkbox;
+        });
+        checkboxes = ui.Panel(classesPanels_new, ui.Panel.Layout.Flow('horizontal'), {
+                stretch: 'both',
+                height: '50px'
+            });
+        panel.remove(panel.widgets().get(2));
+        panel.insert(2, checkboxes);
+        aktualisier(overlapList, slopes_threshold, year, biom);
+    },
+    style: {
+      width: '250px'
+    }
+});
+
+var hand_slide = ui.Slider({
+  min:0, 
+  max:100, 
+  value:15, 
+  step:5, 
+  onChange: function (value) {
+    slopes_threshold = value;
+    aktualisier(overlapList, slopes_threshold, year, biom);
+  },
+  style: {
+    width: '750px'
+  }
+    
+  });
+
+var export_button = ui.Button({
+    label: 'Export',
+    onClick: function () {
+        for (var year = 1985; year <= 2019; year++) {
+  
+            var image_anual = aktualisier_image_anual(overlapList, slopes_threshold, year, biom);
+            var image_mensal = aktualisier_image_mensal(overlapList, slopes_threshold, year, biom);
+            
+            Export.image.toAsset({
+              image: image_anual, 
+              description: biom_name + '-' + year + '-3', 
+              assetId: 'projects/mapbiomas-workspace/TRANSVERSAIS/AGUA5-FT/' + biom_name + '-' + year + '-3', 
+              pyramidingPolicy: {
+                'classification': 'mode'
+              },
+              region: biom.first().geometry().bounds(), 
+              scale: 30, 
+              maxPixels: 1e13
+            });
+                        
+            Export.image.toAsset({
+              image: image_mensal, 
+              description: biom_name + '-' + year + '-3_mensal', 
+              assetId: 'projects/mapbiomas-workspace/TRANSVERSAIS/AGUA5-FT/' + biom_name + '-' + year + '-3_mensal', 
+              pyramidingPolicy: {
+                'classification_1': 'mode',
+                'classification_2': 'mode',
+                'classification_3': 'mode',
+                'classification_4': 'mode',
+                'classification_5': 'mode',
+                'classification_6': 'mode',
+                'classification_7': 'mode',
+                'classification_8': 'mode',
+                'classification_9': 'mode',
+                'classification_10': 'mode',
+                'classification_11': 'mode',
+                'classification_12': 'mode'
+              },
+              region: biom.first().geometry().bounds(), 
+              scale: 30, 
+              maxPixels: 1e13
+            });  
+            
+          }
+    },
+    style: {
+      width: '250px'
+    }
+});
+
+var hand_panel = ui.Panel([ui.Label('HAND dist. to waterlogged:', {fontWeight: 'bold'}), hand_slide], ui.Panel.Layout.Flow('horizontal', true), {stretch: 'both'});
+
+// --------------------------------------------------------------------------------- 
+
+var index;
+
+var optPanel = ui.Panel([biom_selector, hand_panel, export_button], ui.Panel.Layout.Flow('horizontal', true));
+
+var panel0 = ui.Panel(
+    [optPanel, splitPanelBefore],
+    ui.Panel.Layout.Flow('vertical', true), {stretch: 'both'}
+);
+
+var panel = ui.Panel([
+  panel0, 
+  chart, 
+  checkboxes],
+    ui.Panel.Layout.Flow('vertical'), {
+        stretch: 'both'
+    });
+ui.root.widgets().reset([panel]);
+ui.root.setLayout(ui.Panel.Layout.Flow('vertical'));

@@ -1,0 +1,304 @@
+/**** Start of imports. If edited, may not auto-convert in the playground. ****/
+var bioms = ee.FeatureCollection("projects/mapbiomas-workspace/AUXILIAR/biomas-2019"),
+    l5_col = ee.ImageCollection("LANDSAT/LT05/C01/T1_SR"),
+    l7_col = ee.ImageCollection("LANDSAT/LE07/C01/T1_SR"),
+    l8_col = ee.ImageCollection("LANDSAT/LC08/C01/T1_SR");
+/***** End of imports. If edited, may not auto-convert in the playground. *****/
+//var biom_nr = 1; var param = 0.25; var freq_limit = 2; var versionIn = '1' //AMAZONIA
+//var biom_nr = 2; var param = 0.25; var freq_limit = 2; var versionIn = '1' //CATINGA
+//var biom_nr = 3; var param = 0.25; var freq_limit = 2; var versionIn = '1' //CERRADO
+var biom_nr = 4; var param = 0.25; var freq_limit = 2; var versionIn = '1' //MATAATLANTICA
+//var biom_nr = 5; var param = 0.30; var freq_limit = 3; var versionIn = '2' //PAMPA
+//var biom_nr = 6; var param = 0.30; var freq_limit = 2; var versionIn = '1' //PANTANAL
+
+var biom_name = [
+  'NONE', 'AMAZONIA', 'CAATINGA', 'CERRADO', 'MATAATLANTICA', 'PAMPA', 'PANTANAL'
+  ][biom_nr];
+  
+var biom = bioms.filter(ee.Filter.eq('CD_Bioma', biom_nr));
+
+var jrc = ee.Image("JRC/GSW1_0/GlobalSurfaceWater");
+var HS_fa = ee.Image("WWF/HydroSHEDS/15ACC");
+
+var amaz = bioms.filter(ee.Filter.eq("CD_Bioma", biom_nr));
+var col = ee.ImageCollection("projects/mapbiomas-workspace/TRANSVERSAIS/AGUA5-FT");
+
+l7_col = l7_col.filterDate('1995-01-01', '2012-12-31');
+
+var bandnamed = ['blue', 'green', 'red', 'nir', 'swir1', 'swir2'];
+var bands_l5 = ['B1', 'B2', 'B3', 'B4', 'B5', 'B7'];
+var bands_l7 = ['B1', 'B2', 'B3', 'B4', 'B5', 'B7'];
+var bands_l8 = ['B2', 'B3', 'B4', 'B5', 'B6', 'B7'];
+
+var rename_bands = function (imgCol, input) {
+  return imgCol.select(input, bandnamed);
+};
+
+var cloudScore = function (image) {
+
+    var rescale = function (obj) {
+    
+        var image = obj.image.subtract(obj.min).divide(ee.Number(obj.max).subtract(obj.min));
+    
+        return image;
+    };
+
+    var cloudThresh = 10;
+
+    // Compute several indicators of cloudiness and take the minimum of them.
+    var score = ee.Image(1.0);
+
+    // Clouds are reasonably bright in the blue band.
+    score = score.min(rescale({
+        'image': image.select(['blue']),
+        'min': 1000,
+        'max': 3000
+    }));
+
+    // Clouds are reasonably bright in all visible bands.
+    score = score.min(rescale({
+        'image': image.expression("b('red') + b('green') + b('blue')"),
+        'min': 2000,
+        'max': 8000
+    }));
+
+    // Clouds are reasonably bright in all infrared bands.
+    score = score.min(rescale({
+        'image': image.expression("b('nir') + b('swir1') + b('swir2')"),
+        'min': 3000,
+        'max': 8000
+    }));
+
+    // However, clouds are not snow.
+    var ndsi = image.normalizedDifference(['green', 'swir1']);
+
+    score = score.min(rescale({
+        'image': ndsi,
+        'min': 8000,
+        'max': 6000
+    })).multiply(100).byte();
+
+    var cond = score.lt(cloudThresh);
+    
+    // var kernel = ee.Kernel.euclidean(2000, 'meters');
+    
+    // var proximity = cond.distance(kernel, false);
+    
+    // cond = cond.remap([0,1], [1,0]).where(proximity.gt(0), 0);
+    
+    return image.updateMask(cond);
+};
+
+var endmembers = [
+    [119.0, 475.0, 169.0, 6250.0, 2399.0, 675.0], /*gv*/
+    [1514.0, 1597.0, 1421.0, 3053.0, 7707.0, 1975.0], /*npv*/
+    [1799.0, 2479.0, 3158.0, 5437.0, 7707.0, 6646.0], /*soil*/
+    [4031.0, 8714.0, 7900.0, 8989.0, 7002.0, 6607.0] /*cloud*/
+];
+
+var sma = function (image) {
+    
+    var bands = ['blue','green','red','nir','swir1','swir2'];
+    var outBandNames = ['gv', 'npv', 'soil', 'cloud'];
+    
+    var fractions = ee.Image(image)
+                        .select(bands)
+                        .unmix(endmembers); //, true, true
+
+    fractions = fractions.rename(outBandNames);
+    return image.addBands(fractions);
+};
+
+var l5_ready = rename_bands(l5_col, bands_l5).map(sma);
+var l7_ready = rename_bands(l7_col, bands_l7).map(sma);
+var l8_ready = rename_bands(l8_col, bands_l8).map(sma);
+
+var processed_col = l5_ready.merge(l7_ready).merge(l8_ready).filter(ee.Filter.lte('CLOUD_COVER', 70));
+var param = 0.25; var freq_limit = 2;
+var soil_caat_col= ee.ImageCollection('projects/mapbiomas-workspace/AMOSTRAS/col5/CAATINGA/classificacoes/maskSoil_not_corr');
+var col1 = col
+ .filter(ee.Filter.eq('version',  '1'))
+ .filter(ee.Filter.neq('year', 2020));
+function renameBands(image) {
+    var bands = ['sum'];
+    var new_bands = ['classification'];
+    return image.select(bands).rename(new_bands);
+}
+var col2 = col
+ .filter(ee.Filter.eq('version',  '1'))
+ .filter(ee.Filter.eq('year', 2020));
+var year2020 = ee.ImageCollection(col2)
+  .map(renameBands); 
+var col_anual = ee.ImageCollection(col1.merge(year2020));
+var col_mensal = ee.ImageCollection ('users/wwfrioparaguai/MapBiomasAGUA/iteration_2')
+  .map(function(i){
+  var ano =  ee.Number.parse(ee.String(i.get('system:index')).slice(12));
+  return i.set('year', ano);
+});
+
+
+var doSoilMask = function (year, biom) {
+  
+  var soil_masking = function (image) {
+    return image.addBands(
+      image.select("soil").gt(10)
+        .where(
+          image.select("soil").gt(param), 1
+          )
+        .rename('soil_mask').selfMask()
+      );
+  };
+  
+  var start = ee.Date.fromYMD(year, 1, 1);
+  var end = start.advance(1, 'year');
+  
+  var soil_freq = processed_col.filterDate(start, end).filterBounds(biom).map(cloudScore).map(soil_masking).sum().select('soil_mask');
+  //var imgs_freq = processed_col.filterDate(start, end).filterBounds(biom).map(cloudScore).map(function (i) {return i.select('red').gt(-1)}).sum();
+  
+  //var soil_perc = soil_freq.divide(imgs_freq).unmask().multiply(100).round().selfMask();
+  //var soil_perc_mask = soil_perc.gte(perc_limit).selfMask();
+  // var soil_freq_mask = soil_freq.gte(freq_limit).selfMask();
+  var soil_mask = soil_freq.gte(freq_limit).selfMask();
+  
+  return soil_mask//.addBands(soil_freq)
+  .rename('soil_mask')
+  .clip(biom);
+};
+
+var hand30_1000 =  ee.Image("users/gena/GlobalHAND/30m/hand-1000");
+var srtm = ee.Image("USGS/SRTMGL1_003");
+
+function radians(img) { return img.toFloat().multiply(3.1415927).divide(180); }
+
+var slopes = ee.Terrain.slope(srtm);
+
+var doHandClasses = function (dist) {
+
+  var gaussianKernel = ee.Kernel.gaussian(3, 2, 'pixels', true, 2);
+  var terrain = ee.call('Terrain', srtm.convolve(gaussianKernel));
+  
+  var slope = radians(terrain.select(['slope']))
+    .lt(0.076);
+
+  slope = slope
+    .focal_max({radius: 50, units: 'meters'})
+    .focal_min({radius: 50, units: 'meters'});
+
+  var hand_class = hand30_1000.addBands(slope).expression("(b(0) <= 5.3) ? 0 : (b(0) <= "+ dist +" && b(0) > 5.3 ) ? 1 : (b(0) > "+ dist +" && b(1) == 0 ) ? 2   : (b(0) > "+ dist +" && b(1) == 1 ) ? 3 : 0" );
+
+  return hand_class;
+};
+
+var doHand = function () {
+  var hand0 = doHandClasses(15).lte(1);
+  var water = jrc.select('occurrence').divide(100).multiply(HS_fa.mask()).gt(0);
+  var unmasked = hand0.addBands(water).reduce(ee.Reducer.max()).unmask();
+  return unmasked;
+};
+
+var corrigir_anual = function (coll, cadence, year, biom) {
+
+  var soil_caat_year = soil_caat_col.filter(ee.Filter.eq('year', 1985)).sum().gte(1).selfMask();
+  var soil_mask = doSoilMask(year, biom).addBands(soil_caat_year).reduce(ee.Reducer.max()).gt(0).selfMask();
+  
+  var hand = doHand();
+  
+  var img_new = coll.filter(ee.Filter.eq('year', year)).first()
+    .where(soil_mask.gt(0), 0)
+    .where(hand.eq(0), 0)
+    .selfMask()
+    .clip(biom)
+    .byte();
+  
+  return img_new
+};
+
+var corrigir_mensal = function (coll, cadence, year, biom) {
+
+  var soil_caat_year = soil_caat_col.filter(ee.Filter.eq('year', 1985)).sum().gte(1).selfMask();
+  var soil_mask = doSoilMask(year, biom).addBands(soil_caat_year).reduce(ee.Reducer.max()).gt(0).selfMask();
+  
+  var hand = doHand();
+
+  var img_new = coll.filter(ee.Filter.eq('year', year)).first()
+    .where(soil_mask.gt(0), 0)
+    .where(hand.eq(0), 0)
+    //.where(roads.gt(0), 0)
+    .selfMask()
+    .rename([
+        'classification_1',
+        'classification_2',
+        'classification_3',
+        'classification_4',
+        'classification_5',
+        'classification_6',
+        'classification_7',
+        'classification_8',
+        'classification_9',
+        'classification_10',
+        'classification_11',
+        'classification_12'
+        ])
+    .clip(biom)
+    .byte();
+  
+  return img_new.clip(biom);
+ 
+};
+
+for (var year=1989; year<=1989; year++) {
+
+var img_anual_2 = corrigir_anual(col_anual, 'annual', year, biom); 
+var img_mensal_2 = corrigir_mensal(col_mensal, 'monthly', year, biom);
+
+var out_anual = img_anual_2.clip(biom)
+        .set('year', ee.Number(year))
+        .set('collection', 5)
+        .set('biome', biom_name)
+        .set('source', 'gtagua')
+        .set('version', '7')
+        .set('cadence', "annual");
+var out_mensal = img_mensal_2.clip(biom)
+        .set('year', ee.Number(year))
+        .set('collection', 5)
+        .set('biome', biom_name)
+        .set('source', 'gtagua')
+        .set('version', '7')
+        .set('cadence', "monthly");
+        
+ Export.image.toAsset({
+    image: out_anual, 
+    description: 'AGUA_' + biom_name + '-' + year + '-7', 
+    assetId: 'projects/mapbiomas-workspace/TRANSVERSAIS/AGUA5-FT/' + biom_name + '-' + year + '-7', 
+    pyramidingPolicy: {
+      'classification': 'mode'
+    },
+    region: biom.first().geometry().bounds(), 
+    scale: 30, 
+    maxPixels: 1e13
+  });
+
+Export.image.toAsset({
+    image: out_mensal, 
+    description: 'AGUA_' + biom_name + '-' + year + '-7_mensal', 
+    assetId: 'projects/mapbiomas-workspace/TRANSVERSAIS/AGUA5-FT/' + biom_name + '-' + year + '-7_mensal', 
+    pyramidingPolicy: {
+      'classification_1': 'mode',
+      'classification_2': 'mode',
+      'classification_3': 'mode',
+      'classification_4': 'mode',
+      'classification_5': 'mode',
+      'classification_6': 'mode',
+      'classification_7': 'mode',
+      'classification_8': 'mode',
+      'classification_9': 'mode',
+      'classification_10': 'mode',
+      'classification_11': 'mode',
+      'classification_12': 'mode'
+    },
+    region: biom.first().geometry().bounds(), 
+    scale: 30, 
+    maxPixels: 1e13
+  }); 
+
+}

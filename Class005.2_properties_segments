@@ -1,0 +1,192 @@
+/*************************************
+// Código em python
+
+ diretório 
+--> https://colab.research.google.com/drive/1TOYdVNR_vFCLi9UT_621Cov_ijcK6nL-?usp=sharing
+
+/*************************************
+
+/*
+import ee
+
+biom_name = 'CAAT'
+year = 1990
+table_done = ee.FeatureCollection('projects/imazon-simex/MAPBIOMAS/GTAGUA/FASE2/OBJCRU/' + biom_name + '/obj_' + '2' + '_' + str(year))#.distinct('label')
+
+def morp_props (f):
+  bound = f.geometry().bounds()
+  laenge = ee.Geometry.LineString([ee.List(bound.coordinates().get(0)).get(0),ee.List(bound.coordinates().get(0)).get(1)])
+  breite = ee.Geometry.LineString([ee.List(bound.coordinates().get(0)).get(1), ee.List(bound.coordinates().get(0)).get(2)])
+  area = f.area(10)
+  perimetro = f.perimeter()
+  ratio = ee.Number(area).divide(ee.Number(perimetro))
+  compactness = ee.Number(0.2821).multiply(perimetro).divide(ee.Number(area).sqrt())
+  circularity = ee.Number(3.14159265359).multiply(4).multiply(area).divide(perimetro.pow(2))
+  convexidade = ee.Number(area).divide(ee.Number(bound.area(10)))
+  max_extensao = ee.Number(ee.List([laenge.length(), breite.length()]).reduce(ee.Reducer.max()))
+  elongation = ee.Number(1.128).multiply((area.divide(max_extensao.pow(2))).sqrt())
+  shape_form = max_extensao.pow(2).divide(area)
+  ratio_laenge_breite = ee.List([laenge.length().divide(breite.length()), breite.length().divide(laenge.length())]).reduce(ee.Reducer.min())
+  nr_of_neighbors_im = table.filterBounds(f.geometry()).size()
+  nr_of_neighbors_50 = table.filterBounds(f.geometry().buffer(50)).size()
+  return f.set('morp_aream2', area).set('morp_perime',  perimetro).set('morp_r_aPer',  ratio).set('morp_r_aPeC',  compactness).set('morp_r_circ',  circularity).set('morp_r_elon',  elongation).set('morp_r_shpf',  shape_form).set('morp_r_laCu',  ratio_laenge_breite).set('morp_convex',  convexidade).set('morp_maxExt',  max_extensao).set('morp_nrViim',  nr_of_neighbors_im).set('morp_nrVi50',  nr_of_neighbors_50)
+  
+  def freq_props (f):
+  reducer = ee.Reducer.mean().repeat(2).combine(ee.Reducer.mode().repeat(2));
+  dictionary = image.reduceRegion(reducer=reducer,geometry=f.geometry(),scale=30,maxPixels=1e13)
+  freq_meanTo = ee.Array(dictionary.get('mean')).get([0])
+  freq_meanAn = ee.Array(dictionary.get('mean')).get([1])
+  freq_tempUl = ee.Array(dictionary.get('mode')).get([0])
+  freq_tempPr = ee.Array(dictionary.get('mode')).get([1])
+  #freq_meanTo = ee.Number(total_freq.rename('number').reduceRegion(reducer=ee.Reducer.mean(), geometry=f.geometry(), scale=30, bestEffort=True, maxPixels=1e12).get('number'))
+  #freq_meanAn = ee.Number(anual_freq.rename('number').reduceRegion(reducer= ee.Reducer.mean(), geometry= f.geometry(), scale= 30, bestEffort= True, maxPixels= 1e12).get('number'))
+  #freq_tempUl = ee.Number(temp_behavior_red.rename('number').reduceRegion(reducer= ee.Reducer.mode(), geometry= f.geometry(), scale= 30, bestEffort= True, maxPixels= 1e12).get('number'))
+  #freq_tempPr = ee.Number(temp_behavior_green.rename('number').reduceRegion(reducer= ee.Reducer.mode(), geometry= f.geometry(), scale= 30, bestEffort= True, maxPixels= 1e12).get('number'))
+  return f.set('freq_meanTo', freq_meanTo).set('freq_meanAn', freq_meanAn).set('freq_tempUl', freq_tempUl).set('freq_tempPr', freq_tempPr)
+  
+  def data_props (f):
+  area = f.area(10);
+  geometria = f.geometry()
+  buffer = geometria.buffer(100)
+  data_anaNat = raster_ana_nat.reduceRegion(reducer=ee.Reducer.first(),geometry= geometria,scale=30).get('constant')#Binarização
+  data_anaAnt = raster_ana_ant.reduceRegion(reducer=ee.Reducer.first(),geometry= geometria,scale=30).get('constant')
+  data_anaHid = raster_ana_hidreletricas.reduceRegion(reducer=ee.Reducer.first(),geometry= geometria,scale=30).get('constant')# ana_hidreletricas.filterBounds(geometria).size().gt(0)
+  data_mpbCls = ee.Number(mapb_year.rename('number').reduceRegion(reducer= ee.Reducer.mode(), geometry= buffer, scale= 30, bestEffort= False, maxPixels= 1e12).get('number'))
+  urb_area = ee.Number(ee.Image.pixelArea().updateMask(mapb_year.eq(24)).reduceRegion(reducer= ee.Reducer.sum(),geometry=buffer,scale= 30,bestEffort= False,maxPixels= 1e12).get('area'))
+  data_mpbUrb = urb_area.divide(area)
+  min_area = ee.Number(ee.Image.pixelArea().updateMask(mapb_year.eq(30)).reduceRegion(reducer= ee.Reducer.sum(),geometry=buffer,scale= 30,bestEffort= False,maxPixels= 1e12).get('area'))
+  data_mpbMin = min_area.divide(area)
+  for_area = ee.Number(ee.Image.pixelArea().updateMask(mapb_year.eq(3)).reduceRegion(reducer= ee.Reducer.sum(),geometry=buffer,scale= 30,bestEffort= False,maxPixels= 1e12).get('area'))
+  data_mpbFor = for_area.divide(area)
+  nnf_area = ee.Number(ee.Image.pixelArea().updateMask(mapb_year.eq(12)).reduceRegion(reducer= ee.Reducer.sum(),geometry=buffer,scale= 30,bestEffort= False,maxPixels= 1e12).get('area'))
+  data_mpbNnf = nnf_area.divide(area)
+  pas_area = ee.Number(ee.Image.pixelArea().updateMask(mapb_year.eq(15)).reduceRegion(reducer= ee.Reducer.sum(),geometry=buffer,scale= 30,bestEffort= False,maxPixels= 1e12).get('area'))
+  data_mpbPas = pas_area.divide(area)
+  srtmMx = ee.Number(srtm_slopes.rename('number').reduceRegion(reducer= ee.Reducer.max(),geometry=geometria,scale= 30,bestEffort= False,maxPixels= 1e12).get('number'))
+  data_srtmMx = srtmMx.divide(area)
+  f =f.setGeometry(f.centroid(1).geometry())
+  return f.set('data_anaNat', data_anaNat).set('data_anaAnt', data_anaAnt).set('data_anaHid', data_anaHid).set('data_mpbCls', data_mpbCls).set('data_mpbUrb', data_mpbUrb).set('data_mpbMin', data_mpbMin).set('data_mpbFor', data_mpbFor).set('data_mpbNnf', data_mpbNnf).set('data_mpbPas', data_mpbPas).set('data_srtmMx', data_srtmMx)
+  
+  def getCentroid (feat):
+  return feat.centroid();
+  
+  def selectbyCentroidIntersection(feat):
+  done_intersect = table_done.filterBounds(feat.geometry().centroid()).size();
+  return feat.set("done", done_intersect);
+  
+  def getImageYear(img):
+  ano = ee.Number.parse(ee.String(img.get('system:index')).slice(12));
+  return img.set('year', ano);
+  
+  def understadableFunction1(f):
+  return f.set('one', 12)
+  
+  fill = ee.FeatureCollection(
+        [ee.Feature(
+            ee.Geometry.Polygon(
+                [[[-51.25454194445434, -30.494187477171398],
+                  [-51.25454194445434, -30.752402752029397],
+                  [-50.74093110461059, -30.752402752029397],
+                  [-50.74093110461059, -30.494187477171398]]], None, False),
+            {
+              "one": 1,
+              "system:index": "0"
+            }),
+        ee.Feature(
+            ee.Geometry.Polygon(
+                [[[-51.26140839953246, -30.494779144516073],
+                  [-51.26140839953246, -31.011692994612797],
+                  [-50.98400361437621, -31.011692994612797],
+                  [-50.98400361437621, -30.494779144516073]]], None, False),
+            {
+              "one": 1,
+              "system:index": "1"
+            }),
+        ee.Feature(
+            ee.Geometry.Polygon(
+                [[[-52.00316728007151, -31.497521863578694],
+                  [-52.00316728007151, -31.753608646571603],
+                  [-51.74498856913401, -31.753608646571603],
+                  [-51.74498856913401, -31.497521863578694]]], None, False),
+            {
+              "one": 1,
+              "system:index": "2"
+            })]);
+            
+def exportFeature_Asset (featC, name, path_As):
+
+    optExp = {   
+            'collection': featC, 
+            'description': name, 
+            'assetId': path_As            
+        }
+
+    task = ee.batch.Export.table.toAsset(**optExp)
+    task.start() 
+
+    print("exportando feature " + name)
+    
+def propTableChunks(propTable,biom_name,year):
+  chunkSize = 10000
+  propSize = propTable.size().getInfo()
+  numChunks = propSize/chunkSize
+  print('PropTable size:'+str(propSize))
+  for chunk in range(0,math.floor(numChunks)+1):
+    print('Chunk ('+str(chunk)+'): '+str(chunkSize)+','+str((chunkSize*chunk)))
+    exportTable = ee.FeatureCollection(propTable.toList(chunkSize,(chunkSize*chunk))).map(morp_props).map(freq_props).map(data_props)
+    exportFeature_Asset (exportTable, 'GTAGUA_'+str(biom_name)+'_'+ str(year)+'_'+str(chunk), 'projects/mapbiomas-workspace/AMOSTRAS/GTAGUA/OBJETOS/ANUAL/obj_'+str(biom_name)+'_'+ str(year)+'_'+str(chunk))
+
+import math
+
+#To list
+chunks = 100
+chunkSize = math.floor(table_done.size().getInfo() / chunks)
+print(chunkSize)
+
+
+srtm = ee.Image("USGS/SRTMGL1_003")
+mapb = ee.Image("projects/mapbiomas-workspace/public/collection5/mapbiomas_collection50_integration_v1")
+col = ee.ImageCollection("users/wwfrioparaguai/MapBiomasAGUA/iteration_2")
+ana_total = ee.FeatureCollection("users/frederickirchhoff/geoft_bho_massa_dagua")
+ana_ant = ana_total.filter(ee.Filter.eq('detipomass', 'Artificial'))
+ana_nat = ana_total.filter(ee.Filter.neq('detipomass', 'Artificial'))
+raster_ana_ant = ee.Image(0).toByte().paint(ana_ant,1)
+raster_ana_nat = ee.Image(0).toByte().paint(ana_nat,1)
+srtm_slopes = ee.Terrain.slope(srtm)
+temp = ee.Image('projects/imazon-simex/MAPBIOMAS/GTAGUA/temp_rgb_swsc2_1985_2019_mensal').unmask(0)
+temp_behavior_green = temp.select('begin2first').unmask(0)
+temp_behavior_red = temp.select('last2end').unmask(0)
+total_freq = temp.select('freq').unmask(0)
+
+
+for year in range(2020,2021):
+  const_year = year
+  if year < 1990:
+    const_year = 1990;
+  ana_hidreletricas = ee.FeatureCollection("users/frederickirchhoff/ana_hydropower_actual_start").filter(ee.Filter.lte('CONST_YEAR', const_year))
+  raster_ana_hidreletricas =  ee.Image(0).toByte().paint(ana_hidreletricas,1)
+  collection = ee.FeatureCollection([])
+  col = col.map(getImageYear)
+  fill_img = fill.map(understadableFunction1).reduceToImage(['one'], ee.Reducer.firstNonNull())
+  anual_freq = col.filter(ee.Filter.eq('year', year)).first().reduce(ee.Reducer.sum()).addBands(fill_img).reduce(ee.Reducer.max())
+  image = total_freq.addBands(anual_freq).addBands(temp_behavior_red).addBands(temp_behavior_green);
+  for cd_biom in range(1,7): #(cd_biom=2; cd_biom<=6; cd_biom++) :
+    tableAggr = ee.FeatureCollection([])
+    biom_names = ['NONE', 'AMAZ', 'CAAT', 'CERR', 'MATA', 'PAMP', 'PANT']
+    biom_name = biom_names[cd_biom]
+    print(biom_name)
+    table = ee.FeatureCollection('projects/imazon-simex/MAPBIOMAS/GTAGUA/FASE2/OBJCRU/' +  str(biom_name) + '/obj_' +  str(cd_biom) + '_' +  str(year))
+    table_done = ee.FeatureCollection('projects/imazon-simex/MAPBIOMAS/GTAGUA/FASE2/OBJCRU/' + str(biom_name) + '/obj_' +  str(cd_biom) + '_' +  str(year)).distinct('label')
+    #if year > 1995 or biom_name != 'AMAZ':
+      table = ee.Join.inverted().apply(table,table_done,ee.Filter.equals("system:index", None, "system:index",None))
+    #table
+    if year > 2019: mapb_year = mapb.select('classification_2019')
+    else: mapb_year = mapb.select('classification_' + str(year))
+    propTableChunks(table,biom_name,year)
+    
+#Cancela Tasks
+!earthengine task list | grep GTAGUA | grep READY | awk '{print $1}' | xargs earthengine task cancel 
+#!earthengine task list | grep GTAGUA | grep RUNNING | awk '{print $1}' | xargs earthengine task cancel 
+
+!earthengine ls -r projects/mapbiomas-workspace/AMOSTRAS/GTAGUA/OBJETOS/ANUAL/1986
+*/

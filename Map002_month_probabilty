@@ -1,0 +1,224 @@
+/**** Start of imports. If edited, may not auto-convert in the playground. ****/
+var grids = ee.FeatureCollection("users/frederickirchhoff/brazil_big_grids");
+/***** End of imports. If edited, may not auto-convert in the playground. *****/
+// 2020 07 01 
+// Water detection algorithm
+var year = 2000;
+
+var p_img_month_func = require('users/frederickirchhoff/agua_paper_2:module_mapbiomas_agua_2020').p_img_month_func;
+var p_year_func = require('users/frederickirchhoff/agua_paper_2:module_mapbiomas_agua_2020').p_year_func;
+var p_month_func = require('users/frederickirchhoff/agua_paper_2:module_mapbiomas_agua_2020').p_month_func;
+
+  
+var grid_names = [
+'SG-23-V',
+'SF-23-Y',
+'SF-23-Z',
+'SF-24-Y',
+'SF-23-X',
+'SF-23-V',
+'SE-23-Y',
+'SE-23-Z',
+'SE-23-X',
+'SE-23-V',
+'SE-24-Y',
+'SE-24-V',
+'SF-24-V',
+'SB-25-V',
+'SB-25-Y',
+'SC-25-V',
+'SC-24-X',
+'SC-24-Z',
+'SC-24-V',
+'SC-24-Y',
+'SD-24-X',
+'SD-24-V',
+'SD-24-Z',
+'SE-24-X',
+'SD-24-Y',
+'SD-23-X',
+'SD-23-Z',
+'SD-23-Y',
+'SD-23-V',
+'SC-23-Z',
+'SC-23-Y',
+'SC-23-X',
+'SC-23-V',
+'SB-24-Y',
+'SB-23-Z',
+'SB-23-Y',
+'SB-23-X',
+'SB-23-V',
+'SA-23-Y',
+'SA-23-Z',
+'SB-24-V',
+'SA-24-Y',
+'SB-24-Z',
+'SB-24-X',
+'SA-24-Z',
+'SA-23-X',
+'SA-23-V',
+'NB-22-Y',
+'NA-22-V',
+'NA-22-X',
+'NA-22-Z',
+'SA-22-X',
+'NA-22-Y',
+'SA-22-V',
+'NA-21-Z',
+'NA-21-X',
+'SA-21-X',
+'NA-21-Y',
+'NA-21-V',
+'SA-21-V',
+'SA-20-X',
+'NA-20-Z',
+'NA-20-X',
+'NB-20-Z',
+'NB-21-Y',
+'NB-20-Y',
+'NA-20-V',
+'NA-19-X',
+'NA-20-Y',
+'SA-20-V',
+'NA-19-Z',
+'SA-19-X',
+'SA-19-V',
+'NA-19-Y',
+'SC-19-Y',
+'SC-19-V',
+'SC-19-Z',
+'SC-19-X',
+'SB-19-Z',
+'SB-19-Y',
+'SB-19-X',
+'SB-19-V',
+'SB-18-Z',
+'SB-18-X',
+'SC-18-X',
+'SA-19-Y',
+'SA-19-Z',
+'SA-20-Y',
+'SA-20-Z',
+'SB-20-X',
+'SB-20-V',
+'SB-20-Y',
+'SC-20-V',
+'SB-20-Z',
+'SD-20-V',
+'SC-20-Y',
+'SH-21-Y',
+'SH-21-V',
+'SH-21-X',
+'SG-21-Z',
+'SG-21-X',
+'SF-21-Z',
+'SF-21-X',
+'SF-21-Y',
+'SF-21-V',
+'SF-22-V',
+'SF-22-Y',
+'SF-22-X',
+'SF-22-Z',
+'SE-22-Z',
+'SG-22-X',
+'SG-22-Z',
+'SH-22-X',
+'SG-22-Y',
+'SH-22-V',
+'SG-22-V',
+'SH-21-Z',
+'SH-22-Y',
+'SI-22-V',
+'SH-22-Z',
+'SB-21-Z',
+'SC-21-X',
+'SB-21-X',
+'SA-21-Z',
+'SA-21-Y',
+'SB-22-V',
+'SA-22-Y',
+'SA-22-Z',
+'SB-22-X',
+'SB-22-Z',
+'SC-22-X',
+'SB-22-Y',
+'SC-22-V',
+'SC-22-Y',
+'SC-21-Z',
+'SD-21-X',
+'SD-22-V',
+'SC-22-Z',
+'SD-22-X',
+'SD-22-Z',
+'SE-22-X',
+'SE-22-V',
+'SE-22-Y',
+'SD-22-Y',
+'SE-21-X',
+'SD-21-Z',
+'SE-21-Z',
+'SE-21-Y',
+'SE-21-V',
+'SD-21-Y',
+'SE-20-X',
+'SD-20-Z',
+'SD-21-V',
+'SC-21-Y',
+'SC-20-Z',
+'SD-20-X',
+'SC-20-X',
+'SB-21-V',
+'SB-21-Y',
+'SC-21-V',
+  ];
+  
+// -------------------------------------------------------------------------------------
+// water func
+var water_y_m_func = function (year, month) {
+  
+  var p_img_month = p_img_month_func(year, month);
+  var p_year = p_year_func(year);
+  var p_month = p_month_func(year, month);
+
+  var water_detection = p_img_month.gte(0.67).and(p_year.gte(0.35)).selfMask();
+  var fill_gap = p_month.gte(0.5).and(p_year.gte(0.5)).selfMask();
+  
+  var water = water_detection.addBands(fill_gap).reduce(ee.Reducer.max()).rename('surface_water');
+  
+  return water;
+};
+
+var water_y = 
+  water_y_m_func(year, 1).rename('w_1').addBands(
+  water_y_m_func(year, 2).rename('w_2')).addBands(
+  water_y_m_func(year, 3).rename('w_3')).addBands(
+  water_y_m_func(year, 4).rename('w_4')).addBands(
+  water_y_m_func(year, 5).rename('w_5')).addBands(
+  water_y_m_func(year, 6).rename('w_6')).addBands(
+  water_y_m_func(year, 7).rename('w_7')).addBands(
+  water_y_m_func(year, 8).rename('w_8')).addBands(
+  water_y_m_func(year, 9).rename('w_9')).addBands(
+  water_y_m_func(year, 10).rename('w_10')).addBands(
+  water_y_m_func(year, 11).rename('w_11')).addBands(
+  water_y_m_func(year, 12).rename('w_12'));
+
+for (var i=0; i<20; i++) {
+  var grid_name = grid_names[i];
+  
+  var grid = grids.filter(ee.Filter.eq('grid_name', grid_name));
+  
+  var image = water_y.clip(grid)
+    .set('year', year)
+    .set('grid_name', grid_name);
+  
+  Export.image.toAsset({
+    image: image, 
+    description: 'pilot_' + year + '_' + grid_name, 
+    assetId: 'users/wwfrioparaguai/MapBiomasAGUA/pilot_2020/pilot_' + year + '_' + grid_name, 
+    region: grid.first().geometry(), 
+    scale: 30, 
+    maxPixels: 1e13
+  });
+  
+}

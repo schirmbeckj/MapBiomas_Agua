@@ -1,0 +1,106 @@
+/**** Start of imports. If edited, may not auto-convert in the playground. ****/
+var bioms = ee.FeatureCollection("projects/mapbiomas-workspace/AUXILIAR/biomas-2019");
+/***** End of imports. If edited, may not auto-convert in the playground. *****/
+var biom_nr = 4;
+
+
+var biom_4s = [
+'NONE', 'AMAZ', 'CAAT', 'CERR', 'MATA', 'PAMP', 'PANT'  
+];
+var biom_4 = biom_4s[biom_nr];
+var biom = bioms.filter(ee.Filter.eq("CD_Bioma", biom_nr));
+
+var limits = [
+  [],
+  [143, 60, 25, 30, 42], // AMAZ
+  //[95, 107, 25, 25, 58], // CAAT
+  [100, 100, 50, 50, 100], // CAAT
+  [61, 83, 30, 25, 60], // CERR
+  [58, 102, 30, 30, 52], // MATA
+  [108, 153, 10, 10, 38], // PAMP
+  [165, 60, 25, 25, 25], // PANT
+  ];
+
+// insert path of exported training
+var training = ee.FeatureCollection("projects/mapbiomas-workspace/AMOSTRAS/GTAGUA/OBJETOS/TREINAMENTO/AGUA_training_" + biom_4);
+var class_1 = training.filter(ee.Filter.eq("class", 1))//.limit(limits[biom_nr][0]);
+var class_2 = training.filter(ee.Filter.eq("class", 2))//.limit(limits[biom_nr][1]);
+var class_3 = training.filter(ee.Filter.eq("class", 3))//.limit(limits[biom_nr][2]);
+var class_4 = training.filter(ee.Filter.eq("class", 4))//.limit(limits[biom_nr][3]);
+var class_5 = training.filter(ee.Filter.eq("class", 5))//.limit(limits[biom_nr][4]);
+
+Map.addLayer(ee.Image(1), {palette: "black"}, "black", true, 0.5);
+Map.addLayer(training.filter(ee.Filter.eq("class", 1)), {color: "0000ff"}, "training 1 nat", false);
+Map.addLayer(training.filter(ee.Filter.eq("class", 2)), {color: "00ffff"}, "training 2 ant", false);
+Map.addLayer(training.filter(ee.Filter.eq("class", 3)), {color: "ff00ff"}, "training 3 hid", false);
+Map.addLayer(training.filter(ee.Filter.eq("class", 4)), {color: "ff4400"}, "training 4 min", false);
+Map.addLayer(training.filter(ee.Filter.eq("class", 5)), {color: "000000"}, "training 5 fpo", false);
+
+print(training.size())
+var training_set = class_1.merge(class_2).merge(class_3).merge(class_4).merge(class_5);
+
+for (var year=1985; year<=2017; year++) {
+
+var input = ee.FeatureCollection("projects/mapbiomas-workspace/AMOSTRAS/GTAGUA/OBJETOS/MERGED/AGUA_obj_merged_" + biom_4 + "_" + year)
+  .filter(ee.Filter.notNull(["freq_meanTo"]));
+
+var classifier = ee.Classifier.smileRandomForest({
+  numberOfTrees: 50, 
+//  variablesPerSplit, 
+//  minLeafPopulation, 
+//  bagFraction, 
+//  maxNodes, 
+//  seed
+});
+
+var inputProps = [
+"data_anaAnt",
+"data_anaHid",
+"data_anaNat",
+"data_mpbCls",
+"data_mpbFor",
+"data_mpbMin",
+"data_mpbNnf",
+"data_mpbPas",
+"data_mpbUrb",
+"data_srtmMx",
+"freq_meanAn",
+"freq_meanTo",
+"freq_tempPr",
+"freq_tempUl",
+"morp_aream2",
+"morp_convex",
+"morp_maxExt",
+"morp_nrVi50",
+"morp_nrViim",
+"morp_perime",
+"morp_r_aPeC",
+"morp_r_aPer",
+"morp_r_circ",
+"morp_r_elon", 
+"morp_r_laCu",
+"morp_r_shpf",
+  ];
+
+var classifier_trained = classifier.train(training_set, "class", inputProps);
+var output = input.classify(classifier_trained);
+
+Export.table.toAsset(output, "teste_wbc_" + biom_4 + "_" + year, "projects/mapbiomas-workspace/AMOSTRAS/GTAGUA/OBJETOS/CLASSIFICADOS/TESTE_1/" + biom_4 + "/AGUA_teste_1_" + biom_4 + "_" + year);
+}
+
+// print(output.limit(10));
+
+// var img = output.reduceToImage(["classification"], ee.Reducer.firstNonNull());
+
+var vis = {
+  min:1, max:5,
+  palette: [
+    "0000ff", //1
+    "00ffff", //2
+    "ff00ff", //3
+    "ff4400", //4
+    "000000"  //5
+    ]
+};
+
+// Map.addLayer(img, vis, "img");

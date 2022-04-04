@@ -1,0 +1,275 @@
+/**** Start of imports. If edited, may not auto-convert in the playground. ****/
+var l5_col = ee.ImageCollection("LANDSAT/LT05/C01/T1_SR"),
+    l7_col = ee.ImageCollection("LANDSAT/LE07/C01/T1_SR"),
+    l8_col = ee.ImageCollection("LANDSAT/LC08/C01/T1_SR"),
+    brazil = ee.FeatureCollection("projects/mapbiomas-workspace/AUXILIAR/brasil_2km");
+/***** End of imports. If edited, may not auto-convert in the playground. *****/
+
+l7_col = l7_col.filterDate('1995-01-01', '2012-12-31');
+
+var bandnamed = ['blue', 'green', 'red', 'nir', 'swir1', 'swir2'];
+var bands_l5 = ['B1', 'B2', 'B3', 'B4', 'B5', 'B7'];
+var bands_l7 = ['B1', 'B2', 'B3', 'B4', 'B5', 'B7'];
+var bands_l8 = ['B2', 'B3', 'B4', 'B5', 'B6', 'B7'];
+
+var rename_bands = function (imgCol, input) {
+  return imgCol.select(input, bandnamed);
+};
+
+var endmembers = [
+    [119.0, 475.0, 169.0, 6250.0, 2399.0, 675.0], /*gv*/
+    [1514.0, 1597.0, 1421.0, 3053.0, 7707.0, 1975.0], /*npv*/
+    [1799.0, 2479.0, 3158.0, 5437.0, 7707.0, 6646.0], /*soil*/
+    [4031.0, 8714.0, 7900.0, 8989.0, 7002.0, 6607.0] /*cloud*/
+];
+
+var sma = function (image) {
+    
+    var outBandNames = ['gv', 'npv', 'soil', 'cloud'];
+    
+    var fractions = ee.Image(image)
+        .select(bandnamed)
+        .unmix(endmembers)
+        .max(0)
+        .multiply(100)
+        .byte();
+    
+    fractions = fractions.rename(outBandNames);
+    
+    var summed = fractions.expression('b("gv") + b("npv") + b("soil")');
+    
+    var shade = summed
+        .subtract(100)
+        .abs()
+        .byte()
+        .rename("shade");
+    
+    fractions = fractions.addBands(shade);
+    
+    // return ee.Image(fractions.copyProperties(image));
+    return image.addBands(fractions);
+};
+
+var cloudScore = function (image) {
+
+    var rescale = function (obj) {
+    
+        var image = obj.image.subtract(obj.min).divide(ee.Number(obj.max).subtract(obj.min));
+    
+        return image;
+    };
+
+    var cloudThresh = 10;
+
+    // Compute several indicators of cloudiness and take the minimum of them.
+    var score = ee.Image(1.0);
+
+    // Clouds are reasonably bright in the blue band.
+    score = score.min(rescale({
+        'image': image.select(['blue']),
+        'min': 1000,
+        'max': 3000
+    }));
+
+    // Clouds are reasonably bright in all visible bands.
+    score = score.min(rescale({
+        'image': image.expression("b('red') + b('green') + b('blue')"),
+        'min': 2000,
+        'max': 8000
+    }));
+
+    // Clouds are reasonably bright in all infrared bands.
+    score = score.min(rescale({
+        'image': image.expression("b('nir') + b('swir1') + b('swir2')"),
+        'min': 3000,
+        'max': 8000
+    }));
+
+    // However, clouds are not snow.
+    var ndsi = image.normalizedDifference(['green', 'swir1']);
+
+    score = score.min(rescale({
+        'image': ndsi,
+        'min': 8000,
+        'max': 6000
+    })).multiply(100).byte();
+
+    var cond = score.lt(cloudThresh);
+    
+    // var kernel = ee.Kernel.euclidean(2000, 'meters');
+    
+    // var proximity = cond.distance(kernel, false);
+    
+    // cond = cond.remap([0,1], [1,0]).where(proximity.gt(0), 0);
+    
+    return image.updateMask(cond);
+};
+
+var process_image = function (image) {
+  return sma(image);
+};
+
+var l5_ready = rename_bands(l5_col, bands_l5).map(process_image);
+var l7_ready = rename_bands(l7_col, bands_l7).map(process_image);
+var l8_ready = rename_bands(l8_col, bands_l8).map(process_image);
+
+var processed_col = l5_ready.merge(l7_ready).merge(l8_ready).filter(ee.Filter.lte('CLOUD_COVER', 70));
+
+var years = ee.List.sequence(1985, 2020, 1).map(function (year) {
+  var start = ee.Date.fromYMD(year, 1, 1);
+  var end = start.advance(1, "year");
+  var allImgs = processed_col.filterDate(start, end).filterBounds(brazil).map(cloudScore).map(function (i) {
+    return i.select("red").gt(-1);
+  });
+  var qualityImg = allImgs.sum();
+  var bandStr = ee.String("q").cat(ee.String(ee.Number.parse(year, 10)).slice(0,4));
+  return qualityImg.rename(bandStr).unmask().clip(brazil);
+});
+
+var bandStrs = ee.List.sequence(1985, 2020, 1).map(function (year) {
+  var bandStr = ee.String("q").cat(ee.String(ee.Number.parse(year, 10)).slice(0,4));
+  return bandStr;
+});
+
+var col = ee.ImageCollection.fromImages(years);
+var img = col.toBands().rename(bandStrs);
+print(img)
+Export.image.toAsset({
+  image: img, 
+  description: 'quality_img', 
+  assetId: 'users/wwfrioparaguai/MapBiomasAGUA/quality_img', 
+  region: brazil.first().geometry().bounds(), 
+  scale: 30,
+  maxPixels: 1e13
+});
+
+//***********************************************************************************************************
+//***********************************************************************************************************
+//********************************* calclula o numero de cenas por ano***************************************
+//***********************************************************************************************************
+//***********************************************************************************************************
+
+l7_col = l7_col.filterDate('1995-01-01', '2012-12-31');
+
+var bandnamed = ['blue', 'green', 'red', 'nir', 'swir1', 'swir2'];
+var bands_l5 = ['B1', 'B2', 'B3', 'B4', 'B5', 'B7'];
+var bands_l7 = ['B1', 'B2', 'B3', 'B4', 'B5', 'B7'];
+var bands_l8 = ['B2', 'B3', 'B4', 'B5', 'B6', 'B7'];
+
+var rename_bands = function (imgCol, input) {
+  return imgCol.select(input, bandnamed);
+};
+
+var endmembers = [
+    [119.0, 475.0, 169.0, 6250.0, 2399.0, 675.0], /*gv*/
+    [1514.0, 1597.0, 1421.0, 3053.0, 7707.0, 1975.0], /*npv*/
+    [1799.0, 2479.0, 3158.0, 5437.0, 7707.0, 6646.0], /*soil*/
+    [4031.0, 8714.0, 7900.0, 8989.0, 7002.0, 6607.0] /*cloud*/
+];
+
+var sma = function (image) {
+    
+    var outBandNames = ['gv', 'npv', 'soil', 'cloud'];
+    
+    var fractions = ee.Image(image)
+        .select(bandnamed)
+        .unmix(endmembers)
+        .max(0)
+        .multiply(100)
+        .byte();
+    
+    fractions = fractions.rename(outBandNames);
+    
+    var summed = fractions.expression('b("gv") + b("npv") + b("soil")');
+    
+    var shade = summed
+        .subtract(100)
+        .abs()
+        .byte()
+        .rename("shade");
+    
+    fractions = fractions.addBands(shade);
+    
+    // return ee.Image(fractions.copyProperties(image));
+    return image.addBands(fractions);
+};
+
+var cloudScore = function (image) {
+
+    var rescale = function (obj) {
+    
+        var image = obj.image.subtract(obj.min).divide(ee.Number(obj.max).subtract(obj.min));
+    
+        return image;
+    };
+
+    var cloudThresh = 10;
+
+    // Compute several indicators of cloudiness and take the minimum of them.
+    var score = ee.Image(1.0);
+
+    // Clouds are reasonably bright in the blue band.
+    score = score.min(rescale({
+        'image': image.select(['blue']),
+        'min': 1000,
+        'max': 3000
+    }));
+
+    // Clouds are reasonably bright in all visible bands.
+    score = score.min(rescale({
+        'image': image.expression("b('red') + b('green') + b('blue')"),
+        'min': 2000,
+        'max': 8000
+    }));
+
+    // Clouds are reasonably bright in all infrared bands.
+    score = score.min(rescale({
+        'image': image.expression("b('nir') + b('swir1') + b('swir2')"),
+        'min': 3000,
+        'max': 8000
+    }));
+
+    // However, clouds are not snow.
+    var ndsi = image.normalizedDifference(['green', 'swir1']);
+
+    score = score.min(rescale({
+        'image': ndsi,
+        'min': 8000,
+        'max': 6000
+    })).multiply(100).byte();
+
+    var cond = score.lt(cloudThresh);
+    
+    
+    return image.updateMask(cond);
+};
+
+var process_image = function (image) {
+  return sma(image);
+};
+
+var l5_ready = rename_bands(l5_col, bands_l5).map(process_image);
+var l7_ready = rename_bands(l7_col, bands_l7).map(process_image);
+var l8_ready = rename_bands(l8_col, bands_l8).map(process_image);
+
+var processed_col = l5_ready.merge(l7_ready).merge(l8_ready).filter(ee.Filter.lte('CLOUD_COVER', 70));
+
+
+var list_year = ee.List.sequence(1985, 2020, 1);
+
+var coll_list = list_year.getInfo().map(function (year) {
+
+var allImgs = processed_col.filterDate(year + '-01-01', year + '-12-31').filterBounds(brazil).map(cloudScore).map(function (i) {
+    return i.select("red").gt(-1);
+  }).size();
+
+return ee.Feature(null, {
+    'ano': year,
+    'numero de imagem': allImgs,
+  });
+})
+
+print (coll_list)
+
+Export.table.toDrive(ee.FeatureCollection (coll_list), "number img", "quality", "number img", "csv");
+

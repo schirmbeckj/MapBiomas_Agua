@@ -1,0 +1,23 @@
+var anos = [1996,1997,1998,1999,2000,
+            2001,2002,2003,2004,2005,2006,2007,2008,2009,2010,
+            2011,2012,2013,2014,2015,2016,2017,2018,2019];
+anos = [2012,2013,2014,2015,2016,2017,2018,2019]
+anos = [1993]
+var todos = ee.FeatureCollection('')
+for (var i_ano=0;i_ano<anos.length; i_ano++){ 
+  var ano = anos[i_ano]; 
+  for (var i=0;i<37; i++){  
+    var coll = ee.FeatureCollection('projects/mapbiomas-workspace/AMOSTRAS/GTAGUA/OBJETOS/AMAZ/obj_1_' + String(ano) + '_' + String(i))
+    print(coll.size())
+    if (i == 0 ){ var todos = coll }  
+    else {todos = todos.merge(coll) }
+    //print(todos.size())
+  }
+  var out = 'projects/mapbiomas-workspace/AMOSTRAS/GTAGUA/OBJETOS/AMAZ/obj_1_' + String(ano)
+  Export.table.toAsset({
+    "collection": todos,
+    "description": 'obj_1_' + String(ano),
+    "assetId": out
+  });
+}
+

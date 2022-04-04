@@ -1,0 +1,324 @@
+/**** Start of imports. If edited, may not auto-convert in the playground. ****/
+var mapb = ee.Image("projects/mapbiomas-workspace/public/collection5/mapbiomas_collection50_integration_v1"),
+    srtm = ee.Image("USGS/SRTMGL1_003"),
+    col = ee.ImageCollection("users/wwfrioparaguai/MapBiomasAGUA/iteration_2"),
+    geometry = /* color: #d63000 */ee.Geometry.MultiPoint(),
+    fill = 
+    /* color: #d63000 */
+    /* displayProperties: [
+      {
+        "type": "rectangle"
+      },
+      {
+        "type": "rectangle"
+      },
+      {
+        "type": "rectangle"
+      }
+    ] */
+    ee.FeatureCollection(
+        [ee.Feature(
+            ee.Geometry.Polygon(
+                [[[-51.25454194445434, -30.494187477171398],
+                  [-51.25454194445434, -30.752402752029397],
+                  [-50.74093110461059, -30.752402752029397],
+                  [-50.74093110461059, -30.494187477171398]]], null, false),
+            {
+              "one": 1,
+              "system:index": "0"
+            }),
+        ee.Feature(
+            ee.Geometry.Polygon(
+                [[[-51.26140839953246, -30.494779144516073],
+                  [-51.26140839953246, -31.011692994612797],
+                  [-50.98400361437621, -31.011692994612797],
+                  [-50.98400361437621, -30.494779144516073]]], null, false),
+            {
+              "one": 1,
+              "system:index": "1"
+            }),
+        ee.Feature(
+            ee.Geometry.Polygon(
+                [[[-52.00316728007151, -31.497521863578694],
+                  [-52.00316728007151, -31.753608646571603],
+                  [-51.74498856913401, -31.753608646571603],
+                  [-51.74498856913401, -31.497521863578694]]], null, false),
+            {
+              "one": 1,
+              "system:index": "2"
+            })]);
+/***** End of imports. If edited, may not auto-convert in the playground. *****/
+ 
+var year = 2018;
+for (var cd_biom=1; cd_biom<=6; cd_biom++) {
+// var cd_biom = 6;
+
+var biom_names = ['NONE', 'AMAZ', 'CAAT', 'CERR', 'MATA', 'PAMP', 'PANT'];
+var biom_name = biom_names[cd_biom];
+
+var table = ee.FeatureCollection('projects/imazon-simex/MAPBIOMAS/GTAGUA/FASE2/OBJCRU/' + biom_name + '/obj_' + cd_biom + '_' + year)
+// .filterBounds(roi)
+.distinct('label');
+
+var const_year = year;
+if (year < 1990) {
+  const_year = 1990;
+}
+var ana_hidreletricas = ee.FeatureCollection("users/frederickirchhoff/ana_hydropower_actual_start")
+  .filter(ee.Filter.lte('CONST_YEAR', const_year));
+var ana_total = ee.FeatureCollection("users/frederickirchhoff/geoft_bho_massa_dagua");
+var ana_ant = ana_total.filter(ee.Filter.eq('detipomass', 'Artificial'));
+var ana_nat = ana_total.filter(ee.Filter.neq('detipomass', 'Artificial'));
+var mapb_year = mapb.select('classification_' + year);
+var srtm_slopes = ee.Terrain.slope(srtm);
+
+col = col.map(function (i) {
+  var ano = ee.Number.parse(ee.String(i.get('system:index')).slice(12));
+  return i.set('year', ano);
+});
+var fill_img = fill.map(function (f) {return f.set('one', 12)}).reduceToImage(['one'], ee.Reducer.firstNonNull());
+var temp = ee.Image('projects/imazon-simex/MAPBIOMAS/GTAGUA/temp_rgb_swsc2_1985_2019_mensal');
+var total_freq = temp.select('freq');
+var anual_freq = col.filter(ee.Filter.eq('year', year)).first().reduce(ee.Reducer.sum())
+  .addBands(fill_img)
+  .reduce(ee.Reducer.max());
+var temp_behavior_green = temp.select('begin2first');
+var temp_behavior_red = temp.select('last2end');
+
+// var norm = function (nr, min, max) {
+//   var diff = ee.Number(max).subtract(min);
+//   var norm_nr = ee.Number(nr).subtract(min).divide(diff);
+//   return norm_nr;
+// };
+
+// var log_norm = function (nr, min, max) {
+//   var up_log = ee.Number(max).subtract(min).log();
+//   var nr_log = ee.Number(nr).subtract(min).log();
+//   var norm_nr = nr_log.divide(up_log);
+//   return norm_nr;
+// };
+
+// var norm_prop = function (col, prop) {
+//   var dict = col.reduceColumns(ee.Reducer.percentile([2, 98]), [prop]);
+//   var min = ee.Number(dict.get('p2'));
+//   var max = ee.Number(dict.get('p98'));
+//   var new_col = col.map(function (f, min, max) {
+//     var nr = f.get(prop);
+//     var diff = ee.Number(max).subtract(min);
+//     var norm_nr = ee.Number(nr).subtract(min).divide(diff);
+//     return f.set(prop, norm_nr);
+//   });
+//   return new_col;
+// };
+
+// var log_norm_prop = function (col, prop) {
+//   var dict = col.reduceColumns(ee.Reducer.percentile([2, 98]), [prop]);
+//   var min = ee.Number(dict.get('p2'));
+//   var max = ee.Number(dict.get('p98'));
+//   var new_col = col.map(function (f, min, max) {
+//     var up_log = ee.Number(max).subtract(min).log();
+//     var nr_log = ee.Number(nr).subtract(min).log();
+//     var norm_nr = nr_log.divide(up_log);
+//     return f.set(prop, norm_nr);
+//   });
+//   return new_col;
+// };
+
+var morp_props = function (f) {
+  
+  var bound = f.geometry().bounds();
+  var laenge = ee.Geometry.LineString([ee.List(bound.coordinates().get(0)).get(0), 
+    ee.List(bound.coordinates().get(0)).get(1)]);//.length();
+  var breite = ee.Geometry.LineString([ee.List(bound.coordinates().get(0)).get(1), 
+    ee.List(bound.coordinates().get(0)).get(2)]);//.length();
+  var area = f.area(10);
+  var perimetro = f.perimeter();
+  var ratio = ee.Number(area).divide(ee.Number(perimetro));
+  var compactness = ee.Number(0.2821).multiply(perimetro).divide(ee.Number(area).sqrt());
+  var circularity = ee.Number(3.14159265359).multiply(4).multiply(area).divide(perimetro.pow(2));
+  var convexidade = ee.Number(area).divide(ee.Number(bound.area(10)));
+  var max_extensao = ee.Number(ee.List([laenge.length(), breite.length()]).reduce(ee.Reducer.max()));
+  var elongation = ee.Number(1.128).multiply((area.divide(max_extensao.pow(2))).sqrt());
+  var shape_form = max_extensao.pow(2).divide(area);
+  var ratio_laenge_breite = ee.List([laenge.length().divide(breite.length()), breite.length().divide(laenge.length())])
+    .reduce(ee.Reducer.min());
+  var nr_of_neighbors_im = table.filterBounds(f.geometry()).size();
+  var nr_of_neighbors_50 = table.filterBounds(f.geometry().buffer(50)).size();
+  
+  return f.set('morp_aream2', area)
+    .set('morp_perime',  perimetro)
+    .set('morp_r_aPer',  ratio)
+    .set('morp_r_aPeC',  compactness)
+    .set('morp_r_circ',  circularity)
+    .set('morp_r_elon',  elongation)
+    .set('morp_r_shpf',  shape_form)
+    .set('morp_r_laCu',  ratio_laenge_breite)
+    .set('morp_convex',  convexidade)
+    .set('morp_maxExt',  max_extensao)
+    .set('morp_nrViim',  nr_of_neighbors_im)
+    .set('morp_nrVi50',  nr_of_neighbors_50);
+};
+
+var freq_props = function(f) {
+  var freq_meanTo = ee.Number(
+    total_freq
+    .rename('number')
+    .reduceRegion({
+      reducer: ee.Reducer.mean(), 
+      geometry: f.geometry(), 
+      scale: 30, 
+      bestEffort: true, 
+      maxPixels: 1e12
+    }).get('number'));
+
+  var freq_meanAn = ee.Number(anual_freq
+    .rename('number')
+    .reduceRegion({
+        reducer: ee.Reducer.mean(), 
+        geometry: f.geometry(), 
+        scale: 30, 
+        bestEffort: true, 
+        maxPixels: 1e12
+    }).get('number'));  
+
+  var freq_tempUl = ee.Number(temp_behavior_red
+    .rename('number')
+    .reduceRegion({
+        reducer: ee.Reducer.mode(), 
+        geometry: f.geometry(), 
+        scale: 30, 
+        bestEffort: true, 
+        maxPixels: 1e12
+    }).get('number'));
+
+  var freq_tempPr = ee.Number(temp_behavior_green
+    .rename('number')
+    .reduceRegion({
+        reducer: ee.Reducer.mode(), 
+        geometry: f.geometry(), 
+        scale: 30, 
+        bestEffort: true, 
+        maxPixels: 1e12
+    }).get('number'));  
+
+  return f.set('freq_meanTo', freq_meanTo)
+    .set('freq_meanAn', freq_meanAn)
+    .set('freq_tempUl', freq_tempUl)
+    .set('freq_tempPr', freq_tempPr);
+};
+
+var data_props = function (f) {
+  
+    var area = f.area(10);
+
+    var data_anaNat = ana_nat.filterBounds(f.geometry()).size().gt(0);
+    var data_anaAnt = ana_ant.filterBounds(f.geometry()).size().gt(0);
+    var data_anaHid = ana_hidreletricas.filterBounds(f.geometry()).size().gt(0);
+    
+    var data_mpbCls = ee.Number(mapb_year
+        .rename('number')
+        .reduceRegion({
+            reducer: ee.Reducer.mode(), 
+            geometry: f.geometry().buffer(100), 
+            scale: 30, 
+            bestEffort: true, 
+            maxPixels: 1e12
+        }).get('number'));
+    
+    var urb_area = ee.Number(
+        ee.Image.pixelArea()
+        .updateMask(mapb_year.eq(24))
+        .reduceRegion({
+            reducer: ee.Reducer.sum(),
+            geometry: f.geometry().buffer(100),
+            scale: 30,
+            bestEffort: true,
+            maxPixels: 1e12
+        }).get('area')
+        );
+    var data_mpbUrb = urb_area.divide(area);
+
+    var min_area = ee.Number(
+        ee.Image.pixelArea()
+        .updateMask(mapb_year.eq(30))
+        .reduceRegion({
+            reducer: ee.Reducer.sum(),
+            geometry: f.geometry().buffer(100),
+            scale: 30,
+            bestEffort: true,
+            maxPixels: 1e12
+        }).get('area')
+        );
+    var data_mpbMin = min_area.divide(area);
+
+    var for_area = ee.Number(
+        ee.Image.pixelArea()
+        .updateMask(mapb_year.eq(3))
+        .reduceRegion({
+            reducer: ee.Reducer.sum(),
+            geometry: f.geometry().buffer(100),
+            scale: 30,
+            bestEffort: true,
+            maxPixels: 1e12
+        }).get('area')
+        );
+    var data_mpbFor = for_area.divide(area);
+    
+    var nnf_area = ee.Number(
+        ee.Image.pixelArea()
+        .updateMask(mapb_year.eq(12))
+        .reduceRegion({
+            reducer: ee.Reducer.sum(),
+            geometry: f.geometry().buffer(100),
+            scale: 30,
+            bestEffort: true,
+            maxPixels: 1e12
+        }).get('area')
+        );
+    var data_mpbNnf = nnf_area.divide(area);
+
+    var pas_area = ee.Number(
+        ee.Image.pixelArea()
+        .updateMask(mapb_year.eq(15))
+        .reduceRegion({
+            reducer: ee.Reducer.sum(),
+            geometry: f.geometry().buffer(100),
+            scale: 30,
+            bestEffort: true,
+            maxPixels: 1e12
+        }).get('area')
+        );
+    var data_mpbPas = pas_area.divide(area);
+
+    var srtmMx = ee.Number(
+        srtm_slopes
+        .rename('number')
+        .reduceRegion({
+            reducer: ee.Reducer.max(),
+            geometry: f.geometry(),
+            scale: 30,
+            bestEffort: true,
+            maxPixels: 1e12
+        }).get('number')
+        );
+    var data_srtmMx = srtmMx.divide(area);
+
+  return f.set('data_anaNat', data_anaNat)
+    .set('data_anaAnt', data_anaAnt)
+    .set('data_anaHid', data_anaHid)
+    .set('data_mpbCls', data_mpbCls)
+    .set('data_mpbUrb', data_mpbUrb)
+    .set('data_mpbMin', data_mpbMin)
+    .set('data_mpbFor', data_mpbFor)
+    .set('data_mpbNnf', data_mpbNnf)
+    .set('data_mpbPas', data_mpbPas)
+    .set('data_srtmMx', data_srtmMx);
+};
+
+var prop_table = table
+  .map(morp_props)
+  .map(freq_props)
+  .map(data_props);
+  
+Export.table.toAsset(prop_table, 'obj1_' + cd_biom + '_' + year, 'projects/imazon-simex/MAPBIOMAS/GTAGUA/FASE2/OBJPROP1/' + biom_names[cd_biom] +'/obj_' + cd_biom + '_' + year);
+}

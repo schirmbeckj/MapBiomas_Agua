@@ -1,0 +1,243 @@
+/**** Start of imports. If edited, may not auto-convert in the playground. ****/
+var col = ee.ImageCollection("users/wwfrioparaguai/MapBiomasAGUA/pilot_2020"),
+    table = ee.FeatureCollection("projects/mapbiomas-workspace/AUXILIAR/bacias-nivel-1"),
+    mapb = ee.Image("projects/mapbiomas-workspace/public/collection4/mapbiomas_collection40_integration_v1"),
+    grids = ee.FeatureCollection("users/frederickirchhoff/brazil_big_grids"),
+    srtm = ee.Image("USGS/SRTMGL1_003");
+/***** End of imports. If edited, may not auto-convert in the playground. *****/
+var subgrids = ee.FeatureCollection('users/wwfrioparaguai/Brazil_SubGrids_0_25');
+var slopes = ee.Terrain.slope(srtm);
+
+var year = 2001;
+
+var always_water = mapb.eq(33).reduce(ee.Reducer.sum()).gte(33).selfMask();
+var urban_year = mapb.select('classification_' + year).eq(24);
+
+var grid_names = [
+'SG-23-V',
+'SF-23-Y',
+'SF-23-Z',
+'SF-24-Y',
+'SF-23-X',
+'SF-23-V',
+'SE-23-Y',
+'SE-23-Z',
+'SE-23-X',
+'SE-23-V',
+'SE-24-Y',
+'SE-24-V',
+'SF-24-V',
+'SB-25-V',
+'SB-25-Y',
+'SC-25-V',
+'SC-24-X',
+'SC-24-Z',
+'SC-24-V',
+'SC-24-Y',
+'SD-24-X',
+'SD-24-V',
+'SD-24-Z',
+'SE-24-X',
+'SD-24-Y',
+'SD-23-X',
+'SD-23-Z',
+'SD-23-Y',
+'SD-23-V',
+'SC-23-Z',
+'SC-23-Y',
+'SC-23-X',
+'SC-23-V',
+'SB-24-Y',
+'SB-23-Z',
+'SB-23-Y',
+'SB-23-X',
+'SB-23-V',
+'SA-23-Y',
+'SA-23-Z',
+'SB-24-V',
+'SA-24-Y',
+'SB-24-Z',
+'SB-24-X',
+'SA-24-Z',
+'SA-23-X',
+'SA-23-V',
+'NB-22-Y',
+'NA-22-V',
+'NA-22-X',
+'NA-22-Z',
+'SA-22-X',
+'NA-22-Y',
+'SA-22-V',
+'NA-21-Z',
+'NA-21-X',
+'SA-21-X',
+'NA-21-Y',
+'NA-21-V',
+'SA-21-V',
+'SA-20-X',
+'NA-20-Z',
+'NA-20-X',
+'NB-20-Z',
+'NB-21-Y',
+'NB-20-Y',
+'NA-20-V',
+'NA-19-X',
+'NA-20-Y',
+'SA-20-V',
+'NA-19-Z',
+'SA-19-X',
+'SA-19-V',
+'NA-19-Y',
+'SC-19-Y',
+'SC-19-V',
+'SC-19-Z',
+'SC-19-X',
+'SB-19-Z',
+'SB-19-Y',
+'SB-19-X',
+'SB-19-V',
+'SB-18-Z',
+'SB-18-X',
+'SC-18-X',
+'SA-19-Y',
+'SA-19-Z',
+'SA-20-Y',
+'SA-20-Z',
+'SB-20-X',
+'SB-20-V',
+'SB-20-Y',
+'SC-20-V',
+'SB-20-Z',
+'SD-20-V',
+'SC-20-Y',
+'SH-21-Y',
+'SH-21-V',
+'SH-21-X',
+'SG-21-Z',
+'SG-21-X',
+'SF-21-Z',
+'SF-21-X',
+'SF-21-Y',
+'SF-21-V',
+'SF-22-V',
+'SF-22-Y',
+'SF-22-X',
+'SF-22-Z',
+'SE-22-Z',
+'SG-22-X',
+'SG-22-Z',
+'SH-22-X',
+'SG-22-Y',
+'SH-22-V',
+'SG-22-V',
+'SH-21-Z',
+'SH-22-Y',
+'SI-22-V',
+'SH-22-Z',
+'SB-21-Z',
+'SC-21-X',
+'SB-21-X',
+'SA-21-Z',
+'SA-21-Y',
+'SB-22-V',
+'SA-22-Y',
+'SA-22-Z',
+'SB-22-X',
+'SB-22-Z',
+'SC-22-X',
+'SB-22-Y',
+'SC-22-V',
+'SC-22-Y',
+'SC-21-Z',
+'SD-21-X',
+'SD-22-V',
+'SC-22-Z',
+'SD-22-X',
+'SD-22-Z',
+'SE-22-X',
+'SE-22-V',
+'SE-22-Y',
+'SD-22-Y',
+'SE-21-X',
+'SD-21-Z',
+'SE-21-Z',
+'SE-21-Y',
+'SE-21-V',
+'SD-21-Y',
+'SE-20-X',
+'SD-20-Z',
+'SD-21-V',
+'SC-21-Y',
+'SC-20-Z',
+'SD-20-X',
+'SC-20-X',
+'SB-21-V',
+'SB-21-Y',
+'SC-21-V',
+  ];
+  
+var freq_year = col.filter(ee.Filter.eq('year', year)).mosaic().reduce(ee.Reducer.sum())
+  .addBands(always_water.multiply(12))
+  .where(urban_year.eq(1), 0)
+  .reduce(ee.Reducer.max())
+  .selfMask()
+  .rename('freq');
+  
+// var blues = [
+// 'ffffff',
+// '00ffff',
+// '0000ff',
+// '000060'
+//   ];
+
+// Map.addLayer(freq_year, {palette: blues, min:0, max:12}, 'freq ' + year);
+
+var vec_img = freq_year.gt(0).selfMask();
+
+for (var i=120; i<160; i++) {
+  var grid_name = grid_names[i];
+  
+  var grid = grids.filter(ee.Filter.eq('grid_name', grid_name));
+
+  var subgrids_grid = subgrids
+    .filterBounds(grid.first().geometry().buffer(-100))
+    .filterBounds(table); 
+  
+  var vecs = subgrids_grid.map(function (sub) {
+    return vec_img.clip(sub.geometry()).reduceToVectorsStreaming({
+      geometry: sub.geometry(), 
+      scale: 30, 
+      maxPixels: 1e13, 
+      });
+  });
+  
+  var vecs_flattened = vecs.flatten();
+  
+  var vecs_prop = vecs_flattened.map(function (f) {
+        
+        var mean_freq = freq_year.reduceRegion({
+          reducer: ee.Reducer.mean(), 
+          geometry: f.geometry(), 
+          scale: 30, 
+          bestEffort: true, 
+          maxPixels: 1e13
+        }).get('freq');
+        
+        var mean_srtm = slopes.reduceRegion({
+          reducer: ee.Reducer.mean(), 
+          geometry: f.geometry(), 
+          scale: 30, 
+          bestEffort: true, 
+          maxPixels: 1e13
+        }).get('slope');
+        
+        return f
+          .set('mean_freq', mean_freq)
+          .set('mean_srtm', mean_srtm)
+          .set('year', year)
+          .set('grid_name', grid_name);
+      });
+  
+  Export.table.toAsset(vecs_prop, 'water_objs_' + year + '_' + grid_name, 'users/wwfrioparaguai/MapBiomasAGUA/pilot_vecs/water_objs_' + year + '_' + grid_name);
+  
+}

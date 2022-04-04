@@ -1,0 +1,75 @@
+/**** Start of imports. If edited, may not auto-convert in the playground. ****/
+var coll = ee.ImageCollection("projects/mapbiomas-workspace/TRANSVERSAIS/AGUA5-FT"),
+    brazil = ee.FeatureCollection("projects/mapbiomas-workspace/AUXILIAR/brasil_2km");
+/***** End of imports. If edited, may not auto-convert in the playground. *****/
+var id = 'users/wwfrioparaguai/MapBiomasAGUA/iteration_2';
+
+var geepalettes = require('users/gena/packages:palettes');
+var palettes = require('users/mapbiomas/modules:Palettes.js');
+var colorRamp = require('users/joaovsiqueira1/packages:ColorRamp.js');
+
+for (var year=1985; year<=1985; year++) {
+
+var img_input = 
+ee.ImageCollection (id)
+.filter(ee.Filter.eq('year', year))
+.first()
+.reduce(ee.Reducer.sum())
+.divide(12)
+.multiply(100)
+.gte(60)
+.selfMask()
+.rename ('classification')
+.set ('version', '1')
+.set ('collection', '5')
+.set ('source', 'GTAGUA')
+.set ('theme', 'AGUA')
+.set ('year', year);
+
+var img_input_2 = 
+ee.ImageCollection (id)
+.filter(ee.Filter.eq('year', year))
+.first()
+.reduce(ee.Reducer.sum())
+.divide(12)
+.multiply(100)
+.gte(80)
+.selfMask()
+.rename ('classification')
+.set ('version', '2')
+.set ('collection', '5')
+.set ('source', 'gtagua')
+.set ('theme', 'AGUA')
+.set ('year', year);
+
+Export.image.toAsset({
+              image: img_input, 
+              description: year + '-1_new', 
+              assetId: 'projects/mapbiomas-workspace/TRANSVERSAIS/AGUA5-FT/' + year + '-1_new', 
+              pyramidingPolicy: {
+                'classification': 'mode'
+              },
+              region: brazil.first().geometry().bounds(), 
+              scale: 30, 
+              maxPixels: 1e13
+            });
+            
+Export.image.toAsset({
+              image: img_input_2, 
+              description: year + '-2_new', 
+              assetId: 'projects/mapbiomas-workspace/TRANSVERSAIS/AGUA5-FT/' + year + '-2_new', 
+              pyramidingPolicy: {
+                'classification': 'mode'
+              },
+              region: brazil.first().geometry().bounds(), 
+              scale: 30, 
+              maxPixels: 1e13
+            });
+            
+//Map.addLayer (img_input, {palette: geepalettes.colorbrewer.RdBu[5], min:0, max:100}, 'inter')
+//Map.addLayer (img_input_2, {palette: geepalettes.colorbrewer.RdBu[5], min:0, max:100}, 'inter')
+
+}
+
+//Map.addLayer (coll.filter(ee.Filter.eq('version', '1')).filter(ee.Filter.neq('year', 2020)))
+//print (coll.filter(ee.Filter.eq('version', '5')))

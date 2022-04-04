@@ -1,0 +1,126 @@
+/**** Start of imports. If edited, may not auto-convert in the playground. ****/
+var col = ee.ImageCollection("projects/mapbiomas-workspace/TRANSVERSAIS/AGUA5-FT"),
+    bioms = ee.FeatureCollection("projects/mapbiomas-workspace/AUXILIAR/biomas-2019"),
+    image = ee.Image("projects/mapbiomas-workspace/AMOSTRAS/GTAGUA/ACURACIA/estratos");
+/***** End of imports. If edited, may not auto-convert in the playground. *****/
+var cd_biom = 6; 
+var biom = bioms.filter(ee.Filter.eq("CD_Bioma", cd_biom));
+print(biom.size())
+
+var points = ee.FeatureCollection("projects/mapbiomas-workspace/VALIDACAO/mapbiomas_100k_points_w_edge_and_edited_v7");
+var props = [
+"BIOMA",
+"CLASS_1985",
+"CLASS_1986",
+"CLASS_1987",
+"CLASS_1988",
+"CLASS_1989",
+"CLASS_1990",
+"CLASS_1991",
+"CLASS_1992",
+"CLASS_1993",
+"CLASS_1994",
+"CLASS_1995",
+"CLASS_1996",
+"CLASS_1997",
+"CLASS_1998",
+"CLASS_1999",
+"CLASS_2000",
+"CLASS_2001",
+"CLASS_2002",
+"CLASS_2003",
+"CLASS_2004",
+"CLASS_2005",
+"CLASS_2006",
+"CLASS_2007",
+"CLASS_2008",
+"CLASS_2009",
+"CLASS_2010",
+"CLASS_2011",
+"CLASS_2012",
+"CLASS_2013",
+"CLASS_2014",
+"CLASS_2015",
+"CLASS_2016",
+"CLASS_2017",
+"CLASS_2018",
+"ESTADO",
+"LAT",
+"LON",
+"PESO_AMOS",
+"POINTEDITE",
+"PROB_AMOS",
+  ];
+
+var waterBands = [
+"water_1985",
+"water_1986",
+"water_1987",
+"water_1988",
+"water_1989",
+"water_1990",
+"water_1991",
+"water_1992",
+"water_1993",
+"water_1994",
+"water_1995",
+"water_1996",
+"water_1997",
+"water_1998",
+"water_1999",
+"water_2000",
+"water_2001",
+"water_2002",
+"water_2003",
+"water_2004",
+"water_2005",
+"water_2006",
+"water_2007",
+"water_2008",
+"water_2009",
+"water_2010",
+"water_2011",
+"water_2012",
+"water_2013",
+"water_2014",  
+"water_2015",
+"water_2016",
+"water_2017",
+"water_2018",
+"water_2019",
+  ];
+
+var years = [
+  1985, 1986, 1987, 1988, 1989, 1990, 1991, 1992, 1993, 1994, 1995, 1996, 1997, 1998, 1999,
+  2000, 2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008, 2009, 2010, 2011, 2012, 2013, 2014,
+  2015, 2016, 2017, 2018, 2019
+  ];
+var colAnual = col.filter(ee.Filter.eq("version", "6")).filter(ee.Filter.eq("cadence", "annual"));
+var anualWaterImg = ee.ImageCollection.fromImages(
+  years.map(function (year) {
+    var yearImg = colAnual.filter(ee.Filter.eq("year", year)).mosaic().unmask();
+    
+    return yearImg.rename("water_" + year).uint8();
+  })
+  ).toBands().rename(waterBands)
+  .addBands(image.rename("categoria_freq_total").unmask().uint8());
+
+var samples = anualWaterImg.sampleRegions({
+  collection: points.filterBounds(biom), 
+  properties: props, 
+  scale: 30, 
+  geometries: true
+});
+
+Export.table.toDrive(samples, "samples_acuracia_" + cd_biom, "agua_acuracia", "samples_acuracia_" + cd_biom, "csv");
+Export.table.toDrive(samples, "samples_acuracia_" + cd_biom, "agua_acuracia", "samples_acuracia_" + cd_biom, "shp");
+
+var isWaterMapB = "Rio, Lago e Oceano";
+
+var grad = [
+  "000040", "0000ff", "00ffff", "ffffff",
+  "f1a340", "d73027", "a50026"
+  ] ;
+
+Map.addLayer(image, {palette: grad, min:1, max:7}, "img final");  
+Map.addLayer(points)

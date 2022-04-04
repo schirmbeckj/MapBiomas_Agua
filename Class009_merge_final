@@ -1,0 +1,84 @@
+
+var spatialFilter = ee.Filter.intersects({
+  leftField: '.geo',
+  rightField: '.geo',
+  maxError: 20
+});
+
+var saveAllJoin = ee.Join.saveAll({
+  matchesKey: 'proper',
+});
+
+for (var year=1994;year<1995;year++) {
+
+var biom_names = [
+  'AMAZ', 'CAAT', 'CERR', 'MATA', 'PAMP', 'PANT'
+  ];
+  
+var folder = 'projects/mapbiomas-workspace/AMOSTRAS/GTAGUA/OBJETOS/ANUAL/' + year;
+
+var asset_list = ee.data.listAssets(folder).assets;
+var col_list = asset_list.map(function (e) {
+  
+  var biom_name = ee.String(e.id).slice(68, 72);
+  
+  return ee.FeatureCollection(e.id)
+    .set("biom_name", biom_name);
+});
+
+col_list = ee.List(col_list);
+
+//var biom_col_lists = biom_names.map(function (biom_name) {
+//  return col_list.filter(ee.Filter.eq("biom_name", biom_name));
+//});
+
+for (var i=0;i<6;i++) {
+  
+  var biom_name = biom_names[i];
+  var biom_col_list = col_list.filter(ee.Filter.eq("biom_name", biom_name));
+  
+  var merged_col = ee.FeatureCollection(
+    biom_col_list.iterate(
+      function (col, merged_col) {
+        col = ee.FeatureCollection(col);
+        return ee.FeatureCollection(merged_col)
+        .merge(col);
+      },
+      ee.FeatureCollection([])
+      )
+    ); 
+  
+  var cd_biom = i + 1;
+  var geometry = ee.FeatureCollection ('projects/mapbiomas-workspace/AUXILIAR/biomas-2019')
+    .filter(ee.Filter.eq('CD_Bioma', cd_biom));
+  
+  var table_cru = ee.FeatureCollection('projects/imazon-simex/MAPBIOMAS/GTAGUA/FASE2/OBJCRU/'+ biom_name+'/obj_' + cd_biom +'_'+ year);
+  var table_attr = ee.FeatureCollection('projects/mapbiomas-workspace/AMOSTRAS/GTAGUA/OBJETOS/' + biom_name + '/obj_' + cd_biom + '_' + year);
+  var table_cru_biom = table_cru.filterBounds(geometry);
+  var merged_col_biom = merged_col.filterBounds(geometry);  
+  var table_cru_done = table_cru.distinct('label');  
+ 
+  var table_cru_invert = ee.Join.inverted().apply(table_cru, table_cru_done, ee.Filter.equals("system:index", null, "system:index",null));
+
+  var intersectJoined = saveAllJoin.apply(table_cru_invert, merged_col_biom, spatialFilter);
+  
+  var table_attr_new = intersectJoined.map(function(f){
+    var prop_ponto = ee.Feature(ee.List(f.get('proper')).get(0));
+    var propNames = ee.List(prop_ponto.propertyNames());
+    var out = f.copyProperties(prop_ponto, propNames);
+    return ee.Feature(out).select(propNames);
+  });
+  
+  var merged_col_attr = table_attr_new.merge(table_attr);  
+  
+  var description = "obj_merged_" + biom_name + "_" + year;
+  
+  var merged_col_attr_dat = merged_col_attr.map(function (f) {
+    return f.set("year", year).set("biom_name", biom_name);
+  });
+  
+  Export.table.toAsset(merged_col_attr_dat, description, 'projects/mapbiomas-workspace/AMOSTRAS/GTAGUA/OBJETOS/MERGED/' + description);
+  
+}
+}
+// print (merged_col)

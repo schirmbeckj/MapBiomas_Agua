@@ -1,0 +1,118 @@
+/**** Start of imports. If edited, may not auto-convert in the playground. ****/
+var col = ee.ImageCollection("users/wwfrioparaguai/MapBiomasAGUA/iteration_2"),
+    brazil = 
+    /* color: #d63000 */
+    /* shown: false */
+    /* displayProperties: [
+      {
+        "type": "rectangle"
+      }
+    ] */
+    ee.Geometry.Polygon(
+        [[[-74.33114151047019, 6.063052141000743],
+          [-74.33114151047019, -35.309250039947734],
+          [-30.64950088547019, -35.309250039947734],
+          [-30.64950088547019, 6.063052141000743]]], null, false),
+    fill = 
+    /* color: #d63000 */
+    /* displayProperties: [
+      {
+        "type": "rectangle"
+      },
+      {
+        "type": "rectangle"
+      },
+      {
+        "type": "rectangle"
+      }
+    ] */
+    ee.Geometry.MultiPolygon(
+        [[[[-51.25214278155751, -30.49946169398224],
+           [-51.25214278155751, -31.00193188869398],
+           [-50.9987705891747, -31.00193188869398],
+           [-50.9987705891747, -30.49946169398224]]],
+         [[[-51.03529053208883, -30.49960845360571],
+           [-51.03529053208883, -30.75235107794605],
+           [-50.74844437120016, -30.75235107794605],
+           [-50.74844437120016, -30.49960845360571]]],
+         [[[-52.00477315036283, -31.496793891561616],
+           [-52.00477315036283, -31.751714923406794],
+           [-51.747967730440955, -31.751714923406794],
+           [-51.747967730440955, -31.496793891561616]]]], null, false);
+/***** End of imports. If edited, may not auto-convert in the playground. *****/
+var rgb_temp = ee.Image('projects/mapbiomas-workspace/AMOSTRAS/GTAGUA/temp_rgb_swsc2_1985_2020')
+
+col = col.map(function (i) {
+  var ano = ee.Number.parse(ee.String(i.get('system:index')).slice(12));
+  return i.set('year', ano);
+});
+
+for (var year = 2020; year<=2020; year++) {
+
+var anual_freq = col.filter(ee.Filter.eq('year', year)).first().reduce(ee.Reducer.sum())
+  .addBands(ee.Image(12).clip(fill))
+  .reduce(ee.Reducer.max());
+
+rgb_temp = rgb_temp.unmask().updateMask(anual_freq);
+
+var image = rgb_temp.addBands(anual_freq);
+
+
+var seeds12 = ee.Algorithms.Image.Segmentation.seedGrid(12);//.reproject({crs: 'EPSG:4326', scale: 30});
+var seeds72 = ee.Algorithms.Image.Segmentation.seedGrid(72);
+
+var snic12 = ee.Algorithms.Image.Segmentation.SNIC({
+  image: image, 
+  size: 32,
+  compactness: 5,
+  connectivity: 8,
+  neighborhoodSize:256,
+  seeds: seeds12
+});
+
+var snic72 = ee.Algorithms.Image.Segmentation.SNIC({
+  image: image, 
+  size: 32,
+  compactness: 5,
+  connectivity: 8,
+  neighborhoodSize:256,
+  seeds: seeds72
+});
+
+var clusters12 = snic12.select("clusters").reproject({crs: 'EPSG:4326', scale: 30});
+var clusters72 = snic72.select("clusters").reproject({crs: 'EPSG:4326', scale: 30});
+
+var clusters12_img = anual_freq.gt(0).addBands(clusters12).reduce(ee.Reducer.mean())
+  .set('year', year)
+  .set('seed', 12);
+  
+var clusters72_img = anual_freq.gt(0).addBands(clusters72).reduce(ee.Reducer.mean())
+  .set('year', year)
+  .set('seed', 72);  
+
+
+// Map.addLayer(ee.Image(1), {palette: '008000'},'background green', true, 0.5);
+// Map.addLayer(ee.Image(1), {palette: '808080'},'background grey', false, 0.5);
+// Map.addLayer(anual_freq, {min:1, max:12, palette: 'ffffff, 00ffff, 0000ff, 000040'}, 'annual freq', false);
+// Map.addLayer(rgb_temp, {min:1, max:35}, 'rgb temporal', false);
+// Map.addLayer(clusters_img.randomVisualizer(), {}, 'segments ' + year, false);
+
+Export.image.toAsset({
+  image: clusters12_img, 
+  description: 'SNIC_' + year + '_12', 
+  assetId: 'projects/mapbiomas-workspace/AMOSTRAS/GTAGUA/SNIC_' + year + '_12', 
+  region: brazil, 
+  scale: 30, 
+  maxPixels:1e13
+});
+
+Export.image.toAsset({
+  image: clusters72_img, 
+  description: 'SNIC_' + year + '_72', 
+  assetId: 'projects/mapbiomas-workspace/AMOSTRAS/GTAGUA/SNIC_' + year + '_72', 
+  region: brazil, 
+  scale: 30, 
+  maxPixels:1e13
+});
+
+}

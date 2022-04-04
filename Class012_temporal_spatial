@@ -1,0 +1,228 @@
+/**** Start of imports. If edited, may not auto-convert in the playground. ****/
+var bioms = ee.FeatureCollection("projects/mapbiomas-workspace/AUXILIAR/biomas-2019");
+/***** End of imports. If edited, may not auto-convert in the playground. *****/
+var biomNr = 3;
+var biom_4s = [
+'NONE', 'AMAZ', 'CAAT', 'CERR', 'MATA', 'PAMP', 'PANT'  
+];
+var biomNames = [
+'NONE', 'AMAZONIA', 'CAATINGA', 'CERRADO', 'MATAATLANTICA', 'PAMPA', 'PANTANAL'  
+];
+var biom4 = biom_4s[biomNr];
+var biomLimit = bioms.filter(ee.Filter.eq("CD_Bioma", biomNr));
+
+var path = "projects/mapbiomas-workspace/AMOSTRAS/GTAGUA/OBJETOS/CLASSIFICADOS/TESTE_1/" + biom4 + "/AGUA_teste_1_" + biom4 + "_";
+
+var years = [
+  1985, 1986, 1987, 1988, 1989,
+  1990, 1991, 1992, 1993, 1994,
+  1995, 1996, 1997, 1998, 1999,
+  2000, 2001, 2002, 2003, 2004, 
+  2005, 2006, 2007, 2008, 2009,
+  2010, 2011, 2012, 2013, 2014,
+  2015, 2016, 2017, 2018, 2019,
+  ];
+
+var years_pushed = [0,
+  1985, 1986, 1987, 1988, 1989,
+  1990, 1991, 1992, 1993, 1994,
+  1995, 1996, 1997, 1998, 1999,
+  2000, 2001, 2002, 2003, 2004, 
+  2005, 2006, 2007, 2008, 2009,
+  2010, 2011, 2012, 2013, 2014,
+  2015, 2016, 2017, 2018, 2019,
+  ];
+
+var band_names = years_pushed.map(function (year) {
+  return "b" + year;
+});
+
+var band_names_y = years.map(function (year) {
+  return "b" + year;
+});
+
+var class_col = years.map(function (year) {
+  var class_year = ee.FeatureCollection(path + year)
+    .reduceToImage(["classification"], ee.Reducer.firstNonNull());
+    
+  return class_year.set("year", year);
+});
+
+var fpo_col = ee.ImageCollection(class_col)
+  .map(function (class_year) {
+    return class_year.eq(5);
+  });
+
+var ant_col = ee.ImageCollection(class_col)
+  .map(function (class_year) {
+    return class_year.gte(2).and(class_year.lte(4));
+  });
+
+var nat_col = ee.ImageCollection(class_col)
+  .map(function (class_year) {
+    return class_year.eq(1);
+  });
+
+var ant_list = ant_col.toList(ant_col.size());
+var ant_cumul_bands = ant_list.iterate(function (elem, ant_cumul_bands) {
+  
+  var index = ant_list.indexOf(elem);
+  var prev_index = index.subtract(1);
+  
+  var curr_img = ee.Image(elem).unmask();
+  
+  var prev_cumul_img = ee.Image(
+    ee.Algorithms.If(
+      prev_index.gte(0),
+      ee.Image(ant_cumul_bands).select(index),
+      ee.Image(0)
+      )
+    );
+  
+  var ant_cumul_img = prev_cumul_img.addBands(curr_img).reduce(ee.Reducer.sum())
+    .multiply(curr_img);
+  
+  return ee.Image(ant_cumul_bands).addBands(ant_cumul_img);
+}, 
+ee.Image(ant_list.get(0)).unmask()
+);
+
+var nat_list = nat_col.toList(nat_col.size());
+var nat_cumul_bands = nat_list.iterate(function (elem, nat_cumul_bands) {
+  
+  var index = nat_list.indexOf(elem);
+  var prev_index = index.subtract(1);
+  var curr_img = ee.Image(elem).unmask();
+  
+  var prev_cumul_img = ee.Image(
+    ee.Algorithms.If(
+      prev_index.gte(0),
+      ee.Image(nat_cumul_bands).select(index),
+      ee.Image(0)
+      )
+    );
+  
+  var nat_cumul_img = prev_cumul_img.addBands(curr_img).reduce(ee.Reducer.sum())
+    .multiply(curr_img);
+  
+  return ee.Image(nat_cumul_bands).addBands(nat_cumul_img);
+}, 
+ee.Image(nat_list.get(0)).unmask()
+);
+
+ant_cumul_bands = ee.Image(ant_cumul_bands).rename(band_names);
+nat_cumul_bands = ee.Image(nat_cumul_bands).rename(band_names);
+
+var ant_eq3_col = band_names_y.map(function (band) {
+  var yearSub2 = ee.List(band_names_y).indexOf(band).add(1983);
+  return ant_cumul_bands.select(band).eq(3).multiply(yearSub2).rename("constant").uint16().selfMask();
+});
+var nat_eq3_col = band_names_y.map(function (band) {
+  var yearSub2 = ee.List(band_names_y).indexOf(band).add(1983);
+  return nat_cumul_bands.select(band).eq(3).multiply(yearSub2).rename("constant").uint16().selfMask();
+});
+
+var nat_inic_1seq = ee.ImageCollection.fromImages(nat_eq3_col).min();
+var nat_2eq3_col = ee.ImageCollection.fromImages(nat_eq3_col).map(function (ano_img) {
+  return ano_img.where(ano_img.eq(nat_inic_1seq), 0).selfMask();
+});
+
+var freq_fpo = fpo_col.sum();
+var freq_ant = ant_col.sum();
+var freq_nat = nat_col.sum();
+
+var freq_sum = freq_fpo.addBands(freq_ant).addBands(freq_nat).reduce(ee.Reducer.sum());
+var perc_freq_fpo = freq_fpo.divide(freq_sum).multiply(100).round();
+
+var ant_inic_1seq = ee.ImageCollection.fromImages(ant_eq3_col).min();
+var nat_inic_1seq = nat_inic_1seq;
+var nat_inic_2seq = nat_2eq3_col.min();
+var penult_ant = ee.Image(ant_list.get(ant_list.size().subtract(2)));
+var ult_ant = ee.Image(ant_list.get(ant_list.size().subtract(1)));
+
+var year_imgs = years.map(function (year) {
+  return ee.Image.constant(year).clip(biomLimit)
+    .set("year", year);
+});
+
+// decision 1
+var criteria_1 = perc_freq_fpo.gt(40).unmask();
+
+// decision 1n : decision 2
+var criteria_2 = nat_inic_1seq.gt(ant_inic_1seq).unmask();
+
+// decision 1n 2p : decision 3
+var criteria_3 = nat_inic_2seq.eq(0).unmask();
+
+// decision 1n 2p 3n / 1n 2n : decision 4
+var criteria_4 = freq_nat.gt(freq_ant).unmask();
+
+// decision 1n 2p 3n / 1n 2n - 4p : decision 5
+var criteria_5 = ult_ant.eq(1).unmask();
+
+// decision 1n 2p 3n / 1n 2n - 4p 5p : decision 6
+var criteria_6 = penult_ant.eq(1).unmask();
+
+var corrected_col = ee.ImageCollection(class_col).map(function (class_img) {
+  
+  var year = ee.Number(class_img.get("year"));
+  var year_img = ee.Image.constant(year);
+  
+  var nat_or_ant_1 = year_img.gte(ant_inic_1seq).add(1);
+  var nat_or_ant_2 = year_img.gte(2019).add(1);
+  var nat_or_ant_3 = year_img.gte(2018).add(1);
+  
+  var classified_year_img = ee.Image(0)
+    .where(criteria_1.eq(1), 5)
+    .where(criteria_1.eq(0).and(criteria_2.eq(1).and(criteria_3.eq(1))), nat_or_ant_1)
+    .where(criteria_1.eq(0).and(criteria_2.eq(0).and(criteria_4.eq(0))), 2)
+    .where(criteria_1.eq(0).and(criteria_2.eq(0).and(criteria_4.eq(1).and(criteria_5.eq(0)))), 1)
+    .where(criteria_1.eq(0).and(criteria_2.eq(0).and(criteria_4.eq(1).and(criteria_5.eq(1).and(criteria_6.eq(0))))), nat_or_ant_2)
+    .where(criteria_1.eq(0).and(criteria_2.eq(0).and(criteria_4.eq(1).and(criteria_5.eq(1).and(criteria_6.eq(1))))), nat_or_ant_3)
+    .where(criteria_1.eq(0).and(criteria_2.eq(1).and(criteria_3.eq(0).and(criteria_4.eq(0)))), 2)
+    .where(criteria_1.eq(0).and(criteria_2.eq(1).and(criteria_3.eq(0).and(criteria_4.eq(1).and(criteria_5.eq(0))))), 1)
+    .where(criteria_1.eq(0).and(criteria_2.eq(1).and(criteria_3.eq(0).and(criteria_4.eq(1).and(criteria_5.eq(1).and(criteria_6.eq(0)))))), nat_or_ant_2)
+    .where(criteria_1.eq(0).and(criteria_2.eq(1).and(criteria_3.eq(0).and(criteria_4.eq(1).and(criteria_5.eq(1).and(criteria_6.eq(1)))))), nat_or_ant_3)
+    .updateMask(class_img.gt(0));
+    
+  var const_year = year.max(1990);
+  var ana_hidreletricas = ee.FeatureCollection("users/frederickirchhoff/ana_hydropower_actual_start")
+    .filter(ee.Filter.lte('CONST_YEAR', const_year));
+  
+  var ana_hid_img = ee.Image(1).clip(ana_hidreletricas);    
+  
+  var classified_year_img_exp = classified_year_img
+    .where(classified_year_img.eq(2).and(class_img.eq(3)), 3)
+    .where(classified_year_img.eq(2).and(class_img.eq(4)), 4)
+    .where(ana_hid_img.eq(1), 3);
+   
+  return classified_year_img_exp
+    .rename("classification")
+    .byte()
+    .set("year", year);
+});
+
+for (var ano = 1985; ano <= 2019; ano ++) {
+  var classification_exp = corrected_col.filter(ee.Filter.eq("year", ano)).first()
+    .rename("classification")
+    .byte()
+    .set("version", "1")
+    .set("biome", biomNames[biomNr])
+    .set("year", ano);
+  
+  Export.image.toAsset({
+    image: classification_exp, 
+    description: 'CH_' + biom4 + '_' + ano, 
+    assetId: 'projects/mapbiomas-workspace/AMOSTRAS/GTAGUA/OBJETOS/CLASSIFICADOS/TESTE_1_raster/CH_' + biom4 + '_' + ano, 
+    pyramidingPolicy: {
+      'classification': 'mode'
+    },
+    region: biomLimit.first().geometry().bounds(), 
+    scale: 30, 
+    maxPixels: 1e13
+  }
+);
+}
+
+  
+  
